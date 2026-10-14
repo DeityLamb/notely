@@ -1,0 +1,16 @@
+# Two quick two-finger flicks, 1.66 s apart, as the system reported them to the desktop app.
+# w <seconds> <distance, points, negative = page goes down> <unit> <phase>
+w 0.0000 -30.63 Point Start
+w 0.0206 -28.70 Point Move
+w 0.0206 -26.48 Point Move
+w 0.0206 -25.01 Point Move
+w 0.0372 -21.75 Point Move
+w 0.0372 -19.23 Point Move
+w 0.0540 -17.90 Point Move
+w 0.0708 -0.00 Point End
+w 1.6538 -18.94 Point Start
+w 1.6708 -17.61 Point Move
+w 1.6708 -15.83 Point Move
+w 1.6708 -14.65 Point Move
+w 1.6872 -14.05 Point Move
+w 1.6872 -0.00 Point End

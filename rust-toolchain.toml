@@ -1,0 +1,4 @@
+# egui 0.36 needs Rust 1.95 or newer.
+[toolchain]
+channel = "1.99.0"
+targets = ["wasm32-unknown-unknown"]

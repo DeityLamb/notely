@@ -1,0 +1,22 @@
+[package]
+name = "notely-app"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "notely"
+path = "src/main.rs"
+
+[dependencies]
+notely-core = { path = "../core" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+eframe = { version = "=0.36.2", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+eframe = { version = "=0.36.2", default-features = false, features = ["glow", "default_fonts"] }
+# Must match the installed wasm-bindgen CLI (see Makefile).
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["ClipboardEvent", "DataTransfer", "Document", "Element", "Event", "EventTarget", "HtmlCanvasElement", "Location", "Storage", "Window", "console"] }

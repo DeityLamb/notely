@@ -1,0 +1,91 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Scroll meter</title>
+<!-- The browser half of the scroll meter: the same panel as the desktop
+     app's (NOTELY_SCROLL_METER=1), measuring the browser's own scrolling. -->
+<style>
+  body { margin: 0; background: #191919; color: #e3e2de; font: 16px/25.5px system-ui, sans-serif; }
+  main { max-width: 700px; margin: 56px auto; padding: 0 28px; }
+  p { margin: 0; padding: 4px 0; }
+  #meter { position: fixed; top: 16px; right: 16px; width: 300px; height: 190px; box-sizing: border-box;
+           padding: 12px; border-radius: 8px; background: rgba(20, 20, 20, .92); font: 13px/20px system-ui, sans-serif; }
+  #meter div { display: flex; justify-content: space-between; color: #8c8c8c; }
+  #meter b { color: #e6e6e6; font: 13px/20px monospace; }
+  canvas { margin-top: 6px; width: 276px; height: 80px; border: 1px solid #3c3c3c; box-sizing: border-box; }
+</style>
+<div id="meter">
+  <div>speed now <b id="speed">0 px/s</b></div>
+  <div>peak <b id="peak">0 px/s</b></div>
+  <div>distance <b id="distance">0 px</b></div>
+  <div>time <b id="time">0.00 s</b></div>
+  <canvas id="graph" width="552" height="160"></canvas>
+</div>
+<main id="doc"></main>
+<script>
+  const GAP = 0.3, SPAN = 3;   // as in the desktop meter
+  const doc = document.getElementById("doc");
+  for (let n = 1; n <= 600; n++) {
+    const p = document.createElement("p");
+    p.textContent = `Line ${n} of a long document for measuring scrolling`;
+    doc.append(p);
+  }
+  const el = (id) => document.getElementById(id);
+  const graph = el("graph").getContext("2d");
+  let last = null, active = false, start = 0, lastMove = 0;
+  let samples = [], distance = 0, peak = 0, duration = 0;
+  // The last few seconds in the desktop log's format, for reading out with
+  // `copy(meterLog.join("\n"))`: wheel events the browser delivered
+  // ("w time delta"), the page's offset each frame ("f time offset") and
+  // the viewport height at the start of each gesture ("v time height").
+  const KEEP = 15;
+  window.meterLog = [];
+  const note = (line, now) => {
+    meterLog.push(line);
+    while (meterLog.length && now - Number(meterLog[0].split(" ")[1]) > KEEP) meterLog.shift();
+  };
+  addEventListener("wheel", (e) => {
+    const now = e.timeStamp / 1000;
+    note(`w ${now.toFixed(4)} ${e.deltaY.toFixed(4)} mode${e.deltaMode}`, now);
+  }, { passive: true });
+
+  function frame(ms) {
+    const now = ms / 1000, offset = scrollY;
+    const [before, at] = last ?? [offset, now];
+    last = [offset, now];
+    const moved = offset - before;
+    const dt = now - at;
+    const speed = dt > 0 ? Math.abs(moved) / dt : 0;
+    if (moved !== 0) {
+      if (!active) {
+        active = true; start = now; samples = []; distance = 0; peak = 0;
+        // Chrome's glide depends on the viewport's height.
+        note(`v ${now.toFixed(4)} ${innerHeight}`, now);
+      }
+      lastMove = now;
+      distance += moved;
+      peak = Math.max(peak, speed);
+      duration = now - start;
+    }
+    if (active) {
+      note(`f ${now.toFixed(4)} ${offset.toFixed(3)}`, now);
+      samples.push([now - start, speed]);
+      active = now - lastMove < GAP;
+    }
+    el("speed").textContent = speed.toFixed(0) + " px/s";
+    el("peak").textContent = peak.toFixed(0) + " px/s";
+    el("distance").textContent = Math.abs(distance).toFixed(0) + " px";
+    el("time").textContent = duration.toFixed(2) + " s";
+    // Speed over the gesture: full height is the peak, full width SPAN.
+    const { width, height } = graph.canvas;
+    graph.clearRect(0, 0, width, height);
+    graph.beginPath();
+    for (const [t, v] of samples) {
+      if (t <= SPAN) graph.lineTo(t / SPAN * width, height - v / Math.max(peak, 1) * height);
+    }
+    graph.strokeStyle = "#5a9cf0";
+    graph.lineWidth = 3;
+    graph.stroke();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+</script>
