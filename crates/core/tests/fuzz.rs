@@ -1,7 +1,7 @@
 //! Random editing sessions. After every command the document must still be
 //! well formed, and undoing the whole session must give back the start.
 
-use notely_core::{mark, markdown, store, Block, Editor, Kind, Pos, Selection};
+use notely_core::{mark, markdown, store, Block, Editor, Kind, Pos, Selection, COLORS};
 
 /// Small deterministic generator, so a failure can be replayed from its seed.
 struct Rng(u64);
@@ -95,7 +95,7 @@ fn check(e: &Editor, seed: u64, step: usize, op: usize) {
         }
         assert_eq!(end, b.text.len(), "highlighting does not cover the text, {at}");
     }
-    let _ = (e.selection_markdown(), e.active_marks(), e.link(), e.link_at_caret(), e.has_rich_selection());
+    let _ = (e.selection_markdown(), e.active_marks(), e.active_colors(), e.link(), e.link_at_caret(), e.has_rich_selection());
 }
 
 /// A command that changed the document is undone by one undo, which also
@@ -128,7 +128,7 @@ fn session(seed: u64, steps: usize) {
         let gap = [5.0, 50.0, 2000.0][rng.next(3)];
         now += gap;
         e.set_time(now);
-        let op = rng.next(35);
+        let op = rng.next(37);
         let before = (store::save(e.page(), e.blocks()), e.selection());
         match op {
             0..=7 => e.insert_text(rng.pick(&TEXT)),
@@ -158,6 +158,8 @@ fn session(seed: u64, steps: usize) {
             26 => e.focus_end(),
             31 => e.set_lang(rng.next(e.blocks().len()), rng.next(20) as u8),
             32 => e.toggle_wrap(rng.next(e.blocks().len())),
+            35 => e.set_color(rng.next(COLORS.len() + 1) as u8),
+            36 => e.set_background(rng.next(COLORS.len() + 1) as u8),
             30 => {
                 let n = e.blocks().len();
                 let at = rng.next(n);

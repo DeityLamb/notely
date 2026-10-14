@@ -7,14 +7,16 @@
 //! The flag is a checked to-do, or a code block that does not wrap its
 //! lines; the language is the Markdown name of a code block's language.
 //!
-//! Runs are space separated `len:marks[:link index]`; an empty runs field
-//! means unformatted text. Text and links escape `\`, tab and newlines.
+//! Runs are space separated `len:marks[.color.background][:link index]`,
+//! the colours as indices into `text::COLORS` and written only when either
+//! is set; an empty runs field means unformatted text. Text and links escape
+//! `\`, tab and newlines.
 
 use std::rc::Rc;
 
 use crate::doc::{Block, Kind, Page, MAX_INDENT};
 use crate::highlight;
-use crate::text::{Attrs, RichText, Run};
+use crate::text::{Attrs, RichText, Run, COLORS};
 
 const HEADER: &str = "notely 2";
 /// Documents saved before pages had a title, icon and cover: no page line.
@@ -60,6 +62,9 @@ pub fn save(page: &Page, blocks: &[Block]) -> String {
                     out.push(' ');
                 }
                 out.push_str(&format!("{}:{}", r.len, r.attrs.marks));
+                if r.attrs.color != 0 || r.attrs.bg != 0 {
+                    out.push_str(&format!(".{}.{}", r.attrs.color, r.attrs.bg));
+                }
                 if let Some(link) = &r.attrs.link {
                     let at = links.iter().position(|l| *l == link).unwrap_or_else(|| {
                         links.push(link);
@@ -111,12 +116,17 @@ fn load_block(line: &str) -> Option<Block> {
             .map(|run| {
                 let mut parts = run.split(':');
                 let len = parts.next()?.parse().ok()?;
-                let marks = parts.next()?.parse().ok()?;
+                let mut style = parts.next()?.split('.');
+                let marks = style.next()?.parse().ok()?;
+                // A colour this version does not know is left out.
+                let known = |c: &u8| usize::from(*c) < COLORS.len();
+                let mut color = || style.next().and_then(|c| c.parse().ok()).filter(known);
+                let (color, bg) = (color().unwrap_or(0), color().unwrap_or(0));
                 let link = match parts.next() {
                     Some(i) => Some(links.get(i.parse::<usize>().ok()?)?.clone()),
                     None => None,
                 };
-                Some(Run { len, attrs: Attrs { marks, link } })
+                Some(Run { len, attrs: Attrs { marks, color, bg, link } })
             })
             .collect();
         // Formatting that does not fit the text is dropped, the text kept.

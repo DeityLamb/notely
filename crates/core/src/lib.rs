@@ -10,7 +10,7 @@ pub mod text;
 
 pub use doc::{Block, Kind, Page, Pos, Selection, MAX_INDENT};
 pub use editor::Editor;
-pub use text::{mark, Attrs, RichText};
+pub use text::{mark, Attrs, RichText, COLORS};
 
 /// Markdown of the document a new user starts with.
 pub const WELCOME: &str = include_str!("../welcome.md");

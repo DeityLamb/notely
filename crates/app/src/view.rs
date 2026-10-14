@@ -20,6 +20,7 @@ use eframe::egui::{
 use notely_core::highlight::LANGUAGES;
 use notely_core::{mark, Attrs, Block, Editor, Kind, Pos, Selection};
 
+use crate::colors::ColorPicker;
 use crate::emoji::{self, picker::{Choice, EmojiPicker}};
 use crate::math;
 use crate::theme::{self, Palette, BODY, STEP};
@@ -132,7 +133,7 @@ const APPLY_TOOL: Tool = tool("Apply", Modifiers::NONE, Key::Enter, tick_icon);
 /// The math editor's button.
 const DONE_TOOL: Tool = tool("Done", Modifiers::NONE, Key::Enter, tick_icon);
 /// Side of a toolbar button.
-const TOOL: f32 = 28.0;
+pub const TOOL: f32 = 28.0;
 
 struct Cached {
     rev: u32,
@@ -340,6 +341,7 @@ pub struct DocView {
     /// The open icon or cover picker, and whether it opened on this frame.
     picker: Option<(Picker, bool)>,
     emoji_picker: EmojiPicker,
+    colors: ColorPicker,
     math: Option<MathEdit>,
     /// The selection and the type of its block when last seen: the editor
     /// opens when they change to a caret in a math block.
@@ -1807,7 +1809,8 @@ impl DocView {
             }
 
             if b.kind.is_rich() {
-                code_backgrounds(painter, b, &row.galley, text, pal.code_bg);
+                color_backgrounds(painter, b, &row.galley, text, pal);
+                code_backgrounds(painter, b, &row.galley, text, pal);
             }
             if b.kind != Kind::Divider && !row.typeset {
                 let painter = self.text_painter(painter, b, row, origin);
@@ -2064,6 +2067,7 @@ impl DocView {
                             }
                         }
                         ui.separator();
+                        self.colors.button(ui, ed, pal);
                         link = tool_button(ui, pal, &LINK_TOOL, ed.link().is_some());
                     });
                 });
@@ -2326,35 +2330,72 @@ fn run_pieces(b: &Block, galley: &Galley, wanted: impl Fn(&Attrs) -> bool, mut d
     for (s, attrs) in b.text.runs() {
         let (from, to) = (at, at + s.len());
         at = to;
-        if !wanted(attrs) {
-            continue;
-        }
-        let mut start = ccursor(b, from);
-        start.prefer_next_row = true;
-        let a = galley.pos_from_cursor(start);
-        let z = galley.pos_from_cursor(ccursor(b, to));
-        for line in &galley.rows {
-            let line = line.rect();
-            if line.bottom() <= a.top() + 1.0 || line.top() >= z.bottom() - 1.0 {
-                continue;
-            }
-            let left = if line.top() <= a.top() + 1.0 { a.left() } else { line.left() };
-            let right = if line.bottom() >= z.bottom() - 1.0 { z.right() } else { line.right() };
-            if right > left {
-                draw(Rect::from_min_max(pos2(left, line.top()), pos2(right, line.bottom())), attrs);
-            }
+        if wanted(attrs) {
+            pieces(b, galley, from..to, |piece| draw(piece, attrs));
         }
     }
 }
 
-/// Rounded backgrounds behind a block's inline code, as tall as the
-/// letters rather than the line.
-fn code_backgrounds(painter: &Painter, b: &Block, galley: &Galley, text: Pos2, color: Color32) {
+/// Calls `draw` with each piece of line that the text in `range` covers,
+/// as `run_pieces` does for a run.
+fn pieces(b: &Block, galley: &Galley, range: Range<usize>, mut draw: impl FnMut(Rect)) {
+    let mut start = ccursor(b, range.start);
+    start.prefer_next_row = true;
+    let a = galley.pos_from_cursor(start);
+    let z = galley.pos_from_cursor(ccursor(b, range.end));
+    for line in &galley.rows {
+        let line = line.rect();
+        if line.bottom() <= a.top() + 1.0 || line.top() >= z.bottom() - 1.0 {
+            continue;
+        }
+        let left = if line.top() <= a.top() + 1.0 { a.left() } else { line.left() };
+        let right = if line.bottom() >= z.bottom() - 1.0 { z.right() } else { line.right() };
+        if right > left {
+            draw(Rect::from_min_max(pos2(left, line.top()), pos2(right, line.bottom())));
+        }
+    }
+}
+
+/// A piece of line cut down to the height of the letters, and widened by
+/// `pad` on each side.
+fn letters(b: &Block, piece: Rect, text: Pos2, pad: f32) -> Rect {
     let half = theme::metrics(b.kind).0 * 0.6;
-    run_pieces(b, galley, |attrs| attrs.marks & mark::CODE != 0, |piece, _| {
-        let min = pos2(piece.left() - 2.5, piece.center().y - half);
-        let max = pos2(piece.right() + 2.5, piece.center().y + half);
-        painter.rect_filled(Rect::from_min_max(min, max).translate(text.to_vec2()), INLINE_CODE_RADIUS, color);
+    let min = pos2(piece.left() - pad, piece.center().y - half);
+    let max = pos2(piece.right() + pad, piece.center().y + half);
+    Rect::from_min_max(min, max).translate(text.to_vec2())
+}
+
+/// Backgrounds given to a block's text: a plain fill behind the letters,
+/// square and no wider than them so that it never reads as inline code;
+/// one for each stretch of text with the same background, however its
+/// other formatting changes.
+fn color_backgrounds(painter: &Painter, b: &Block, galley: &Galley, text: Pos2, pal: &Palette) {
+    let runs: Vec<(usize, u8)> = b.text.raw_runs().iter().map(|r| (r.len, r.attrs.bg)).collect();
+    let mut at = 0;
+    for stretch in runs.chunk_by(|x, y| x.1 == y.1) {
+        let (len, bg) = (stretch.iter().map(|r| r.0).sum::<usize>(), stretch[0].1);
+        if bg != 0 {
+            let color = pal.back[usize::from(bg)];
+            pieces(b, galley, at..at + len, |piece| {
+                painter.rect_filled(letters(b, piece, text, 0.0), 0.0, color);
+            });
+        }
+        at += len;
+    }
+}
+
+/// Rounded backgrounds behind a block's inline code. Code given a
+/// background is filled with it and outlined, to stand out as code from
+/// the background around it.
+fn code_backgrounds(painter: &Painter, b: &Block, galley: &Galley, text: Pos2, pal: &Palette) {
+    run_pieces(b, galley, |attrs| attrs.marks & mark::CODE != 0, |piece, attrs| {
+        let chip = letters(b, piece, text, 2.5);
+        if attrs.bg == 0 {
+            painter.rect_filled(chip, INLINE_CODE_RADIUS, pal.code_bg);
+        } else {
+            painter.rect_filled(chip, INLINE_CODE_RADIUS, pal.back[usize::from(attrs.bg)]);
+            painter.rect_stroke(chip, INLINE_CODE_RADIUS, Stroke::new(1.0, pal.line), StrokeKind::Inside);
+        }
     });
 }
 
@@ -2446,17 +2487,22 @@ fn tool_button(ui: &mut Ui, pal: &Palette, tool: &Tool, on: bool) -> bool {
     let c = pos2(painter.round_to_pixel_center(rect.center().x), painter.round_to_pixel_center(rect.center().y));
     let stroke = Stroke::new(1.4, if on { pal.accent } else { pal.fg });
     (tool.icon)(&Icon { painter, c, stroke, turn: 0.0 });
-    let mut tip = egui::Tooltip::for_enabled(&response);
+    tool_tip(&response, pal, tool.name, tool.keys.as_ref());
+    response.clicked()
+}
+
+/// A toolbar button's tooltip: its name and shortcut, above it.
+pub fn tool_tip(response: &Response, pal: &Palette, name: &str, keys: Option<&KeyboardShortcut>) {
+    let mut tip = egui::Tooltip::for_enabled(response);
     tip.popup = tip.popup.align(RectAlign::TOP).gap(6.0);
     tip.show(|ui| {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(tool.name).color(pal.fg));
-            if let Some(keys) = &tool.keys {
+            ui.label(egui::RichText::new(name).color(pal.fg));
+            if let Some(keys) = keys {
                 ui.label(egui::RichText::new(ui.ctx().format_shortcut(keys)).color(pal.muted));
             }
         });
     });
-    response.clicked()
 }
 
 /// A text field's caret, drawn like the document's: a pixel wide, just
