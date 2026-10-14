@@ -83,7 +83,6 @@ rustup installs them on first use.
 | Tab / Shift+Tab | indent / outdent |
 | Ctrl+Shift+↑ / ↓ | move blocks |
 | Ctrl+Enter | check a to-do, or leave a code block |
-| Enter in an equation | leave it for a paragraph below |
 | Shift+Enter | line break inside a block |
 | Ctrl+Z / Ctrl+Shift+Z | undo / redo |
 
@@ -125,9 +124,11 @@ category, with a button for each category at the bottom. The skin tone and the
 recent emoji are kept beside the document.
 
 An equation block holds a formula in TeX (`$$ … $$` in Markdown) and shows
-it typeset, centred. Clicking it, or moving the caret into it, shows the TeX
-for editing with the typeset formula below; TeX that cannot be read says why.
-Formulas wider than the column are drawn smaller to fit.
+it typeset, centred; formulas wider than the column are drawn smaller to fit.
+Clicking it opens its TeX in a popup below, and the formula follows as you
+type; TeX that cannot be read says why. Enter or Done goes on to the text
+after it, Shift+Enter breaks the line, Escape leaves the block selected.
+Arrows select a formula as a block on the way past; Enter opens it.
 
 Hovering a code block shows its options in the top right corner: the
 language (guessed from the text until one is chosen; ` ```rust ` in Markdown),
