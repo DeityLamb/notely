@@ -20,6 +20,7 @@ use eframe::egui::{
 use notely_core::highlight::LANGUAGES;
 use notely_core::{mark, Attrs, Block, Editor, Kind, Pos, Selection};
 
+use crate::emoji::{self, ICONS};
 use crate::theme::{self, Palette, BODY, STEP};
 
 const MAX_WIDTH: f32 = 700.0;
@@ -48,8 +49,6 @@ const COVER_HEIGHT: f32 = 200.0;
 const ICON_SIZE: f32 = 64.0;
 const ICON_BOX: f32 = 78.0;
 const HEAD_BUTTON_HEIGHT: f32 = 28.0;
-/// Icons offered by the icon picker, and at random by "Add icon".
-const ICONS: &str = "📝📄📚📌💡🚀🎯✅⭐🔥🌱🌊🌸🍀🌙☀⚡🎨🎵🎮📷🎉🏆💬💼🏠✈🌍🧠🔑📅🧪☕🍕🐱🐶👋😀😎❤";
 const CODE_PAD: Vec2 = vec2(18.0, 14.0);
 const QUOTE_PAD: f32 = 16.0;
 const CODE_RADIUS: f32 = 6.0;
@@ -1145,8 +1144,7 @@ impl DocView {
             let random = (ui.input(|i| i.time) * 1000.0) as usize;
             match button {
                 HeadButton::AddIcon => {
-                    let icons = icons(ui);
-                    page.icon = icons.get(random % icons.len().max(1)).map_or("📝".into(), char::to_string);
+                    page.icon = ICONS.chars().nth(random % ICONS.chars().count()).unwrap_or('📝').to_string();
                 }
                 HeadButton::AddCover => page.cover = theme::COVERS[random % theme::COVERS.len()].0.to_owned(),
                 HeadButton::ChangeCover => toggle(&mut self.picker, Picker::Cover),
@@ -1232,7 +1230,7 @@ impl DocView {
             if self.icon_hot || self.picker.is_some_and(|(p, _)| p == Picker::Icon) {
                 painter.rect_filled(icon, 6.0, pal.line);
             }
-            painter.text(icon.center(), Align2::CENTER_CENTER, &page.icon, theme::emoji_font(ICON_SIZE), pal.fg);
+            emoji::paint(painter, icon.center(), ICON_SIZE, &page.icon, pal.fg);
         }
         let fade = |name, shown| ui.ctx().animate_bool_with_time(id.with(name), shown, HANDLE_FADE);
         let opacity = [fade("head-buttons", self.head_shown.0), fade("cover-buttons", self.head_shown.1)];
@@ -1264,7 +1262,6 @@ impl DocView {
         let ctx = ui.ctx();
         let mut page = ed.page().clone();
         let mut close = false;
-        let icons = icons(ui);
         let shown = Area::new(Id::new(("page-picker", which)))
             .order(Order::Foreground)
             .pivot(pivot)
@@ -1282,7 +1279,7 @@ impl DocView {
                     let hover = ui.visuals().widgets.hovered.weak_bg_fill;
                     match which {
                         Picker::Icon => {
-                            for row in icons.chunks(8) {
+                            for row in ICONS.chars().collect::<Vec<_>>().chunks(8) {
                                 ui.horizontal(|ui| {
                                     for &c in row {
                                         let (rect, cell) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::click());
@@ -1290,7 +1287,7 @@ impl DocView {
                                         if cell.hovered() || page.icon.chars().eq([c]) {
                                             ui.painter().rect_filled(rect, 5.0, hover);
                                         }
-                                        ui.painter().text(rect.center(), Align2::CENTER_CENTER, c, theme::emoji_font(22.0), pal.fg);
+                                        emoji::paint(ui.painter(), rect.center(), 24.0, c.encode_utf8(&mut [0; 4]), pal.fg);
                                         if cell.clicked() {
                                             (page.icon, close) = (c.to_string(), true);
                                         }
@@ -2070,12 +2067,6 @@ fn text_lines(painter: &Painter, b: &Block, galley: &Galley, text: Pos2, pal: &P
             painter.hline(across, middle + size * STRIKE_DROP, stroke);
         }
     });
-}
-
-/// The icons the emoji font can draw.
-fn icons(ui: &Ui) -> Vec<char> {
-    let font = theme::emoji_font(ICON_SIZE);
-    ui.fonts_mut(|f| ICONS.chars().filter(|&c| f.has_glyph(&font, c)).collect())
 }
 
 /// A cover: one colour, or a gradient from its top left corner to its

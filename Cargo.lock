@@ -1235,6 +1235,7 @@ name = "notely-app"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "image",
  "js-sys",
  "notely-core",
  "wasm-bindgen",

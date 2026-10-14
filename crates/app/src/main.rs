@@ -4,6 +4,7 @@
 //! Markdown all live in the core crate.
 
 mod clipboard;
+mod emoji;
 mod meter;
 mod scroll;
 mod storage;

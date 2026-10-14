@@ -31,6 +31,8 @@ rustup installs them on first use.
   - `main.rs` start-up on each platform, autosave
   - `view.rs` the document widget: layout, painting, keyboard and pointer input
   - `theme.rs` colours, fonts and text styles
+  - `emoji.rs` page icons, drawn from the Twemoji images in `emoji/`
+    (CC-BY 4.0, built by `tools/twemoji.py`)
   - `storage.rs` a file on desktop, `localStorage` in the browser
   - `clipboard.rs` copying, including on pages without the browser's clipboard API
   - `scroll.rs` in the browser, scrolling by the page itself; on desktop the
@@ -40,6 +42,7 @@ rustup installs them on first use.
     browser)
 - `www` — the page hosting the canvas, and the built `pkg/`. The page is what
   scrolls: the canvas is fixed and draws the document at the page's offset.
+- `tools/twemoji.py` — draws the page icons' Twemoji into one image.
 - `tools/scroll-meter.html` — measures a browser's scrolling; `make meter` shows
   the same panel in the desktop app, to compare the two.
 - `spikes` — throwaway demos used to compare UI toolkits, and `web-dom`, the
@@ -84,7 +87,7 @@ selection (Shift extends), Backspace deletes, Ctrl+C / X / V copy, cut and
 replace, Tab and the block shortcuts apply to all of them, Enter or Escape
 returns to the text.
 
-The page has a title above its blocks, and can have an icon (an emoji) and a
+The page has a title above its blocks, and can have an icon (an emoji, drawn by Twemoji) and a
 cover (a colour or gradient). Hovering above the title shows Add icon and Add
 cover, which pick one at random; clicking the icon, or Change cover on the
 cover, opens a picker with Remove. Enter or ↓ on the title's last line goes on
