@@ -42,13 +42,25 @@ mod imp {
         web_sys::window()?.local_storage().ok()?
     }
 
+    /// Where the document is kept. A pull request's preview shares the
+    /// site's origin, so it keeps a document of its own, by its path,
+    /// rather than read and overwrite the site's.
+    fn key() -> String {
+        let path = web_sys::window().and_then(|w| w.location().pathname().ok()).unwrap_or_default();
+        if path.contains("/pr-preview/") {
+            format!("{KEY}:{path}")
+        } else {
+            KEY.to_owned()
+        }
+    }
+
     pub fn load() -> Option<String> {
-        storage()?.get_item(KEY).ok()?
+        storage()?.get_item(&key()).ok()?
     }
 
     pub fn save(data: &str) -> Result<(), String> {
         let storage = storage().ok_or("localStorage is not available")?;
-        storage.set_item(KEY, data).map_err(|_| "localStorage refused the write".to_owned())
+        storage.set_item(&key(), data).map_err(|_| "localStorage refused the write".to_owned())
     }
 }
 
