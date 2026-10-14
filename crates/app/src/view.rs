@@ -14,8 +14,8 @@ use std::sync::Arc;
 use eframe::egui::text::{CCursor, CCursorRange};
 use eframe::egui::{
     self, pos2, vec2, Align2, Area, Color32, CursorIcon, Event, EventFilter, FontId, Galley, Id,
-    ImeEvent, Key, LayerId, Modifiers, Order, Painter, Pos2, Rect, Response, Sense, Stroke,
-    StrokeKind, Ui, Vec2,
+    ImeEvent, Key, KeyboardShortcut, LayerId, Modifiers, Order, Painter, Pos2, Rect, RectAlign, Response,
+    Sense, Stroke, StrokeKind, Ui, Vec2,
 };
 use notely_core::highlight::LANGUAGES;
 use notely_core::{mark, Attrs, Block, Editor, Kind, Pos, Selection};
@@ -83,13 +83,29 @@ const ITEMS: [(&str, &str, &str, Kind); 10] = [
     ("Divider", "---", "hr rule line separator", Kind::Divider),
 ];
 
-const TOOLBAR: [(&str, u8); 5] = [
-    ("B", mark::BOLD),
-    ("I", mark::ITALIC),
-    ("U", mark::UNDERLINE),
-    ("S", mark::STRIKE),
-    ("<>", mark::CODE),
+/// A button of the formatting toolbar: its name and shortcut, as its
+/// tooltip gives them, and its icon.
+struct Tool {
+    name: &'static str,
+    keys: KeyboardShortcut,
+    icon: fn(&Icon),
+}
+
+const fn tool(name: &'static str, modifiers: Modifiers, key: Key, icon: fn(&Icon)) -> Tool {
+    Tool { name, keys: KeyboardShortcut::new(modifiers, key), icon }
+}
+
+/// The formatting toolbar's buttons for marks, with the mark each toggles.
+const MARK_TOOLS: [(u8, Tool); 5] = [
+    (mark::BOLD, tool("Bold", Modifiers::COMMAND, Key::B, bold_icon)),
+    (mark::ITALIC, tool("Italic", Modifiers::COMMAND, Key::I, italic_icon)),
+    (mark::UNDERLINE, tool("Underline", Modifiers::COMMAND, Key::U, underline_icon)),
+    (mark::STRIKE, tool("Strikethrough", Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::S, strike_icon)),
+    (mark::CODE, tool("Inline code", Modifiers::COMMAND, Key::E, code_icon)),
 ];
+const LINK_TOOL: Tool = tool("Link", Modifiers::COMMAND, Key::K, link_icon);
+/// Side of a toolbar button.
+const TOOL: f32 = 28.0;
 
 struct Cached {
     rev: u32,
@@ -1889,15 +1905,16 @@ impl DocView {
             .pivot(Align2::LEFT_BOTTOM)
             .fixed_pos(anchor.left_top() - vec2(0.0, 8.0))
             .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                egui::Frame::popup(ui.style()).inner_margin(4.0).show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        for (label, m) in TOOLBAR {
-                            if ui.selectable_label(marks & m != 0, label).clicked() {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        for &(m, ref tool) in &MARK_TOOLS {
+                            if tool_button(ui, pal, tool, marks & m != 0) {
                                 toggled = Some(m);
                             }
                         }
                         ui.separator();
-                        link = ui.selectable_label(ed.link().is_some(), "Link").clicked();
+                        link = tool_button(ui, pal, &LINK_TOOL, ed.link().is_some());
                     });
                 });
             });
@@ -2112,4 +2129,106 @@ fn copy_icon(painter: &Painter, c: Pos2, done: bool, color: Color32) {
     let sheet = |at: Pos2| Rect::from_center_size(at, vec2(7.5, 9.0));
     painter.rect_stroke(sheet(c + vec2(-1.5, -1.5)), 1.5, stroke, StrokeKind::Middle);
     painter.rect_stroke(sheet(c + vec2(1.5, 1.5)), 1.5, stroke, StrokeKind::Middle);
+}
+
+/// A square button of the formatting toolbar, tinted while `on`, with a
+/// tooltip above it. Returns whether it was clicked.
+fn tool_button(ui: &mut Ui, pal: &Palette, tool: &Tool, on: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(TOOL, TOOL), Sense::click());
+    let response = response.on_hover_cursor(CursorIcon::PointingHand);
+    let painter = ui.painter();
+    if response.hovered() {
+        painter.rect_filled(rect, 5.0, ui.visuals().widgets.hovered.weak_bg_fill);
+    }
+    if on {
+        painter.rect_filled(rect, 5.0, pal.accent.gamma_multiply(0.16));
+    }
+    let c = pos2(painter.round_to_pixel_center(rect.center().x), painter.round_to_pixel_center(rect.center().y));
+    let stroke = Stroke::new(1.4, if on { pal.accent } else { pal.fg });
+    (tool.icon)(&Icon { painter, c, stroke, turn: 0.0 });
+    let mut tip = egui::Tooltip::for_enabled(&response);
+    tip.popup = tip.popup.align(RectAlign::TOP).gap(6.0);
+    tip.show(|ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(tool.name).color(pal.fg));
+            ui.label(egui::RichText::new(ui.ctx().format_shortcut(&tool.keys)).color(pal.muted));
+        });
+    });
+    response.clicked()
+}
+
+/// Lines of a toolbar icon, given on a 24 unit grid (as Lucide's icons are)
+/// centred on `c` and turned clockwise by `turn` around it.
+#[derive(Clone, Copy)]
+struct Icon<'a> {
+    painter: &'a Painter,
+    c: Pos2,
+    stroke: Stroke,
+    turn: f32,
+}
+
+impl Icon<'_> {
+    /// A line through points of the grid.
+    fn line(&self, points: impl IntoIterator<Item = (f32, f32)>) {
+        let (sin, cos) = (self.turn * std::f32::consts::TAU).sin_cos();
+        let at = |(x, y): (f32, f32)| {
+            let (x, y) = (x - 12.0, y - 12.0);
+            self.c + vec2(x * cos - y * sin, x * sin + y * cos) * 0.68
+        };
+        self.painter.line(points.into_iter().map(at).collect(), self.stroke);
+    }
+}
+
+/// Points of the grid on a circle around `c`, from turn `from` to turn
+/// `to`, counted clockwise from the right.
+fn arc(c: (f32, f32), r: f32, from: f32, to: f32) -> impl Iterator<Item = (f32, f32)> {
+    let steps = (r * (to - from).abs() * 12.0).ceil().max(2.0) as usize;
+    (0..=steps).map(move |i| {
+        let (sin, cos) = ((from + (to - from) * i as f32 / steps as f32) * std::f32::consts::TAU).sin_cos();
+        (c.0 + r * cos, c.1 + r * sin)
+    })
+}
+
+/// A B, in heavier lines than the other icons: an upright stroke with two
+/// bowls.
+fn bold_icon(icon: &Icon) {
+    let icon = Icon { stroke: Stroke::new(icon.stroke.width * 1.4, icon.stroke.color), ..*icon };
+    let lower = [(6.0, 12.0)].into_iter().chain(arc((15.0, 16.0), 4.0, -0.25, 0.25));
+    let upper = [(6.0, 20.0), (6.0, 4.0)].into_iter().chain(arc((14.0, 8.0), 4.0, -0.25, 0.25));
+    icon.line(lower.chain(upper));
+}
+
+/// A slanted I with serifs.
+fn italic_icon(icon: &Icon) {
+    icon.line([(10.0, 4.0), (19.0, 4.0)]);
+    icon.line([(5.0, 20.0), (14.0, 20.0)]);
+    icon.line([(15.0, 4.0), (9.0, 20.0)]);
+}
+
+/// A U over a line.
+fn underline_icon(icon: &Icon) {
+    icon.line([(6.0, 4.0)].into_iter().chain(arc((12.0, 10.0), 6.0, 0.5, 0.0)).chain([(18.0, 4.0)]));
+    icon.line([(4.0, 20.0), (20.0, 20.0)]);
+}
+
+/// An S struck through.
+fn strike_icon(icon: &Icon) {
+    icon.line([(16.0, 4.0)].into_iter().chain(arc((9.0, 7.0), 3.0, -0.25, -0.554)));
+    icon.line(arc((14.0, 16.0), 4.0, -0.25, 0.25).chain([(6.0, 20.0)]));
+    icon.line([(4.0, 12.0), (20.0, 12.0)]);
+}
+
+/// Angle brackets around a slash: `</>`.
+fn code_icon(icon: &Icon) {
+    icon.line([(6.0, 8.0), (2.0, 12.0), (6.0, 16.0)]);
+    icon.line([(18.0, 8.0), (22.0, 12.0), (18.0, 16.0)]);
+    icon.line([(14.5, 4.0), (9.5, 20.0)]);
+}
+
+/// Two links of a chain joined by a bar, rising to the right.
+fn link_icon(icon: &Icon) {
+    let icon = Icon { turn: -0.125, ..*icon };
+    icon.line([(9.0, 17.0)].into_iter().chain(arc((7.0, 12.0), 5.0, 0.25, 0.75)).chain([(9.0, 7.0)]));
+    icon.line([(15.0, 7.0)].into_iter().chain(arc((17.0, 12.0), 5.0, -0.25, 0.25)).chain([(15.0, 17.0)]));
+    icon.line([(8.0, 12.0), (16.0, 12.0)]);
 }
