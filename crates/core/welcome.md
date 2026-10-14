@@ -22,3 +22,9 @@ fn main() {
 }
 ```
 
+Two dollar signs start an equation, written in TeX; click it to edit.
+
+$$
+x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
+$$
+

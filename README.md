@@ -37,6 +37,9 @@ rustup installs them on first use.
   - `main.rs` start-up on each platform, autosave
   - `view.rs` the document widget: layout, painting, keyboard and pointer input
   - `theme.rs` colours, fonts and text styles
+  - `math.rs` formulas: TeX laid out by RaTeX (KaTeX's layout, in Rust) and
+    drawn from the KaTeX fonts' outlines at the size shown. The fonts are in
+    `crates/app/math/` (KaTeX, MIT; packed by `tools/katex.py`)
   - `emoji/` emoji drawn by Twemoji, rendered from SVG at the size shown,
     and the emoji picker. The list and the images are in `crates/app/emoji/`
     (Twemoji CC-BY 4.0, names and search words from Emojibase, MIT; built by
@@ -51,6 +54,7 @@ rustup installs them on first use.
 - `www` — the page hosting the canvas, and the built `pkg/`. The page is what
   scrolls: the canvas is fixed and draws the document at the page's offset.
 - `tools/twemoji.py` — builds the emoji list and packs their Twemoji SVGs.
+- `tools/katex.py` — packs the KaTeX fonts formulas are drawn with.
 - `tools/scroll-meter.html` — measures a browser's scrolling; `make meter` shows
   the same panel in the desktop app, to compare the two.
 - `spikes` — throwaway demos used to compare UI toolkits, and `web-dom`, the
@@ -71,12 +75,14 @@ rustup installs them on first use.
 | `/` | block menu |
 | `#`, `##`, `###`, `-`, `1.`, `[]`, `>` then space | block type |
 | ` ``` ` then space or Enter, `---` | code block, divider |
+| `$$` then space or Enter | block equation (TeX) |
 | `**b**`, `*i*`, `~~s~~`, `` `c` ``, `[text](url)` | inline formatting |
 | Ctrl+B / I / U / E, Ctrl+Shift+S, Ctrl+K | bold, italic, underline, code, strike, link |
-| Ctrl+Shift+0…8 | text, H1–H3, to-do, bullet, numbered, quote, code |
+| Ctrl+Shift+0…9 | text, H1–H3, to-do, bullet, numbered, quote, code, equation |
 | Tab / Shift+Tab | indent / outdent |
 | Ctrl+Shift+↑ / ↓ | move blocks |
 | Ctrl+Enter | check a to-do, or leave a code block |
+| Enter in an equation | leave it for a paragraph below |
 | Shift+Enter | line break inside a block |
 | Ctrl+Z / Ctrl+Shift+Z | undo / redo |
 
@@ -105,6 +111,11 @@ Clicking the icon opens the emoji picker: a filter (Enter takes the first
 match), a random emoji, the skin tone, the recent emoji and every emoji by
 category, with a button for each category at the bottom. The skin tone and the
 recent emoji are kept beside the document.
+
+An equation block holds a formula in TeX (`$$ … $$` in Markdown) and shows
+it typeset, centred. Clicking it, or moving the caret into it, shows the TeX
+for editing with the typeset formula below; TeX that cannot be read says why.
+Formulas wider than the column are drawn smaller to fit.
 
 Hovering a code block shows its options in the top right corner: the
 language (guessed from the text until one is chosen; ` ```rust ` in Markdown),

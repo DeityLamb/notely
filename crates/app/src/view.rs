@@ -21,6 +21,7 @@ use notely_core::highlight::LANGUAGES;
 use notely_core::{mark, Attrs, Block, Editor, Kind, Pos, Selection};
 
 use crate::emoji::{self, picker::{Choice, EmojiPicker}};
+use crate::math;
 use crate::theme::{self, Palette, BODY, STEP};
 
 const MAX_WIDTH: f32 = 700.0;
@@ -53,6 +54,15 @@ const CODE_PAD: Vec2 = vec2(18.0, 14.0);
 const QUOTE_PAD: f32 = 16.0;
 const CODE_RADIUS: f32 = 6.0;
 const INLINE_CODE_RADIUS: f32 = 3.5;
+/// Font size of formulas, as KaTeX sets them beside body text, and the
+/// space above and below one.
+const MATH_SIZE: f32 = BODY * 1.21;
+const MATH_PAD: f32 = 10.0;
+/// Tallest a formula is drawn; taller ones, and ones wider than the column,
+/// are drawn smaller.
+const MATH_MAX_HEIGHT: f32 = 800.0;
+/// Height of the line below invalid TeX that says what is wrong with it.
+const MATH_ERROR: f32 = 26.0;
 /// Where lines through and under text are drawn, in font sizes below the
 /// middle of the line: through the middle of the small letters, and a
 /// little under the baseline.
@@ -70,7 +80,7 @@ const COPIED: f64 = 1.2;
 
 /// Slash menu entries: label, typed shortcut shown as a hint, extra lowercase
 /// search words, and the block type they produce.
-const ITEMS: [(&str, &str, &str, Kind); 10] = [
+const ITEMS: [(&str, &str, &str, Kind); 11] = [
     ("Text", "", "paragraph plain", Kind::Paragraph),
     ("Heading 1", "#", "h1 title", Kind::H1),
     ("Heading 2", "##", "h2 subtitle", Kind::H2),
@@ -80,6 +90,7 @@ const ITEMS: [(&str, &str, &str, Kind); 10] = [
     ("To-do list", "[]", "todo task checkbox", Kind::Todo),
     ("Quote", ">", "blockquote", Kind::Quote),
     ("Code", "```", "snippet pre", Kind::Code),
+    ("Block equation", "$$", "math equation formula latex tex katex", Kind::Math),
     ("Divider", "---", "hr rule line separator", Kind::Divider),
 ];
 
@@ -112,6 +123,12 @@ struct Row {
     galley: Arc<Galley>,
     /// Ordinal of a numbered list item.
     number: u32,
+    /// A math block's formula: where it is drawn, in document coordinates,
+    /// and at what size. None while the block is empty or its TeX invalid.
+    formula: Option<(Rect, f32)>,
+    /// Whether the block shows only its formula, its TeX hidden: a math
+    /// block without the caret.
+    typeset: bool,
 }
 
 struct Menu {
@@ -200,8 +217,9 @@ pub struct DocView {
     rows: Vec<Row>,
     /// Height of all rows.
     total: f32,
-    /// What `rows` was computed for: document version, width, theme.
-    laid: Option<(u32, u32, bool)>,
+    /// What `rows` was computed for: document version, width, theme, and
+    /// the math block whose TeX is shown.
+    laid: Option<(u32, u32, bool, Option<usize>)>,
     /// Column Up/Down try to stay in, kept across consecutive presses.
     h_pos: Option<f32>,
     /// At a soft line wrap the same offset is both the end of one row and
@@ -281,7 +299,7 @@ fn insets(b: &Block) -> (f32, f32) {
     match b.kind {
         Kind::Bullet | Kind::Numbered | Kind::Todo => (indent + STEP, 0.0),
         Kind::Quote => (indent + QUOTE_PAD, 0.0),
-        Kind::Code => (indent + CODE_PAD.x, CODE_PAD.x),
+        Kind::Code | Kind::Math => (indent + CODE_PAD.x, CODE_PAD.x),
         _ => (indent, 0.0),
     }
 }
@@ -294,7 +312,7 @@ fn spacing(b: &Block, first: bool) -> (f32, f32) {
         Kind::H1 => 10.0,
         Kind::H2 => 8.0,
         Kind::H3 => 6.0,
-        Kind::Code => 6.0 + CODE_PAD.y,
+        Kind::Code | Kind::Math => 6.0 + CODE_PAD.y,
         _ => 0.0,
     };
     let above = match b.kind {
@@ -439,7 +457,8 @@ impl DocView {
     /// Positions every block. Does nothing when neither the document, the
     /// width nor the theme changed since the last call.
     fn layout(&mut self, ui: &Ui, ed: &Editor, pal: &Palette) {
-        let state = Some((ed.version(), self.width.to_bits(), pal.dark));
+        let editing = self.editing_math(ed);
+        let state = Some((ed.version(), self.width.to_bits(), pal.dark, editing));
         if self.laid == state {
             return;
         }
@@ -458,7 +477,7 @@ impl DocView {
             }
             let galley = self.galley(ui, b, pal);
             let (above, below) = spacing(b, i == 0);
-            let height = above + galley.size().y + below;
+            let mut height = above + galley.size().y + below;
             let (left, right) = insets(b);
             // Unwrapped code keeps how far it was scrolled sideways.
             let most = (galley.size().x - (self.width - left - right)).max(0.0);
@@ -468,7 +487,32 @@ impl DocView {
             };
             let text = vec2(left - across, y + above);
             let lead = theme::lead(ui, b.kind);
-            self.rows.push(Row { top: y, height, text, lead, galley, number: numbers[depth] });
+            let (mut formula, mut typeset) = (None, false);
+            if b.kind == Kind::Math {
+                let indent = f32::from(b.indent) * STEP;
+                let fitted = self.fit_formula(ui, b, self.width - indent);
+                let centred = |top: f32, extent: Vec2| {
+                    Rect::from_min_size(pos2(indent + (self.width - indent - extent.x) / 2.0, top), extent)
+                };
+                match fitted {
+                    // Without the caret, a formula is shown on its own.
+                    Some(Ok((extent, size))) if editing != Some(i) => {
+                        typeset = true;
+                        formula = Some((centred(y + 4.0 + MATH_PAD, extent), size));
+                        height = 2.0 * (4.0 + MATH_PAD) + extent.y;
+                    }
+                    // With it, below its TeX.
+                    Some(Ok((extent, size))) => {
+                        let top = text.y + galley.size().y + CODE_PAD.y + MATH_PAD;
+                        formula = Some((centred(top, extent), size));
+                        height = top + extent.y + MATH_PAD + 4.0 - y;
+                    }
+                    // Below the TeX, a line saying what is wrong with it.
+                    Some(Err(_)) => height += MATH_ERROR - 6.0,
+                    None => {}
+                }
+            }
+            self.rows.push(Row { top: y, height, text, lead, galley, number: numbers[depth], formula, typeset });
             y += height;
         }
         self.total = y;
@@ -477,6 +521,29 @@ impl DocView {
             let frame = self.frame;
             self.cache.retain(|_, c| c.seen == frame);
         }
+    }
+
+    /// The math block whose TeX is shown, for editing: the one the selection
+    /// is in, unless it reaches out of it.
+    fn editing_math(&self, ed: &Editor) -> Option<usize> {
+        let sel = ed.selection();
+        let i = sel.focus.block;
+        let inside = sel.anchor.block == i && self.picked.is_none() && !self.editing_title;
+        (inside && ed.blocks()[i].kind == Kind::Math).then_some(i)
+    }
+
+    /// The extent and font size of a math block's formula, made smaller to
+    /// fit `width`; None while the block is empty, and why its TeX is
+    /// invalid if it is.
+    fn fit_formula(&self, ui: &Ui, b: &Block, width: f32) -> Option<Result<(Vec2, f32), String>> {
+        let tex = b.text.as_str();
+        if tex.trim().is_empty() {
+            return None;
+        }
+        Some(math::measure(ui.ctx(), tex, MATH_SIZE).map(|extent| {
+            let scale = (width / extent.x).min(MATH_MAX_HEIGHT / extent.y).min(1.0);
+            (extent * scale, MATH_SIZE * scale)
+        }))
     }
 
     /// Places the cover, the icon, the buttons above the title and the title.
@@ -523,6 +590,10 @@ impl DocView {
     fn hit(&self, ed: &Editor, at: Vec2) -> (Pos, bool) {
         let i = self.rows.partition_point(|r| r.top + r.height <= at.y).min(self.rows.len() - 1);
         let row = &self.rows[i];
+        if row.typeset {
+            // A formula opens with the caret after its TeX.
+            return (Pos::new(i, ed.blocks()[i].text.len()), false);
+        }
         let cursor = row.galley.cursor_from_pos(at - row.text);
         (Pos::new(i, byte_offset(&ed.blocks()[i], cursor)), cursor.prefer_next_row)
     }
@@ -641,6 +712,7 @@ impl DocView {
             (true, true, Key::Num6) => ed.set_kind(Kind::Numbered),
             (true, true, Key::Num7) => ed.set_kind(Kind::Quote),
             (true, true, Key::Num8) => ed.set_kind(Kind::Code),
+            (true, true, Key::Num9) => ed.set_kind(Kind::Math),
             _ => {}
         }
     }
@@ -721,7 +793,7 @@ impl DocView {
                         let (anchor, focus) = if anchor <= focus { (a, b) } else { (b, a) };
                         self.pick(ed, anchor, focus);
                     }
-                    (true, true, k) if (Key::Num0..=Key::Num8).contains(&k) => {
+                    (true, true, k) if (Key::Num0..=Key::Num9).contains(&k) => {
                         span(ed);
                         self.key(ui, ed, pal, key, m);
                         self.pick(ed, anchor, focus);
@@ -899,7 +971,7 @@ impl DocView {
     /// A painter for a block's text. Code is kept inside its block, where
     /// lines that are not wrapped would run out of it.
     fn text_painter(&self, painter: &Painter, b: &Block, row: &Row, origin: Pos2) -> Painter {
-        if b.kind != Kind::Code {
+        if !theme::is_source(b.kind) {
             return painter.clone();
         }
         let left = origin.x + f32::from(b.indent) * STEP + CODE_PAD.x - 4.0;
@@ -1321,9 +1393,9 @@ impl DocView {
     fn handle_rects(&self, ed: &Editor, origin: Pos2, i: usize) -> (Rect, Rect) {
         let (b, row) = (&ed.blocks()[i], &self.rows[i]);
         let line = row.galley.rows.first().map_or(BODY, |r| r.row.size.y);
-        let middle = match b.kind {
-            Kind::Divider => row.top + row.height / 2.0,
-            _ => row.text.y + line / 2.0,
+        let middle = match b.kind == Kind::Divider || row.typeset {
+            true => row.top + row.height / 2.0,
+            false => row.text.y + line / 2.0,
         };
         let right = origin.x + f32::from(b.indent) * STEP - HANDLE_GAP;
         let (top, bottom) = (origin.y + middle - HANDLE_HEIGHT / 2.0, origin.y + middle + HANDLE_HEIGHT / 2.0);
@@ -1498,9 +1570,10 @@ impl DocView {
                 let line = row.text.x..=self.width;
                 at.y >= row.top && line.contains(&at.x) && ed.blocks()[i].kind != Kind::Divider
             });
+            let on_formula = on_text && self.rows[i].typeset;
             if self.on_option || self.handle_hot != (false, false) {
                 // The button under the pointer has set the cursor.
-            } else if over.is_some() || checkbox {
+            } else if over.is_some() || checkbox || on_formula {
                 ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
             } else if on_text {
                 ui.ctx().set_cursor_icon(CursorIcon::Text);
@@ -1553,6 +1626,10 @@ impl DocView {
             let (b, row) = (&ed.blocks()[i], &self.rows[i]);
             let visible = origin.y + row.top <= clip.bottom() && origin.y + row.top + row.height >= clip.top();
             if !visible || b.kind == Kind::Divider {
+                continue;
+            }
+            if let Some((rect, _)) = row.formula.filter(|_| row.typeset) {
+                painter.rect_filled(rect.translate(origin.to_vec2()).expand(4.0), 3.0, color);
                 continue;
             }
             let painter = &self.text_painter(painter, b, row, origin);
@@ -1641,7 +1718,15 @@ impl DocView {
                     let bar = Rect::from_min_max(pos2(left, text.y), pos2(left + 3.0, text.y + size.y));
                     painter.rect_filled(bar, 0.0, pal.fg);
                 }
-                Kind::Code => {
+                Kind::Math if row.typeset => {
+                    // Under the pointer, a formula shows it can be clicked.
+                    if self.handle == Some(i) && self.drag.is_none() {
+                        let min = pos2(left, origin.y + row.top + 4.0);
+                        let max = pos2(column.right(), origin.y + row.top + row.height - 4.0);
+                        painter.rect_filled(Rect::from_min_max(min, max), CODE_RADIUS, pal.code_bg.gamma_multiply(0.6));
+                    }
+                }
+                Kind::Code | Kind::Math => {
                     let min = pos2(left, text.y - CODE_PAD.y);
                     let max = pos2(column.right(), text.y + size.y + CODE_PAD.y);
                     painter.rect_filled(Rect::from_min_max(min, max), CODE_RADIUS, pal.code_bg);
@@ -1653,18 +1738,30 @@ impl DocView {
                 _ => {}
             }
 
-            if b.kind != Kind::Divider && b.kind != Kind::Code {
+            if b.kind.is_rich() {
                 code_backgrounds(painter, b, &row.galley, text, pal.code_bg);
             }
-            if b.kind != Kind::Divider {
+            if b.kind != Kind::Divider && !row.typeset {
                 let painter = self.text_painter(painter, b, row, origin);
                 painter.galley(text + vec2(0.0, row.lead), row.galley.clone(), pal.fg);
+            }
+            if let Some((rect, size)) = row.formula {
+                math::paint(painter, origin + rect.min.to_vec2(), b.text.as_str(), size, pal.fg);
+            } else if b.kind == Kind::Math && !b.text.is_empty() {
+                if let Err(error) = math::measure(ui.ctx(), b.text.as_str(), MATH_SIZE) {
+                    let at = pos2(text.x, text.y + size.y + CODE_PAD.y + MATH_ERROR / 2.0);
+                    let painter = self.text_painter(painter, b, row, origin);
+                    painter.text(at, Align2::LEFT_CENTER, error, FontId::proportional(12.5), pal.code_fg);
+                }
             }
             if b.kind.is_rich() {
                 text_lines(painter, b, &row.galley, text, pal);
             }
             let caret_here = sel.is_collapsed() && sel.focus.block == i && self.picked.is_none();
-            if b.text.is_empty() && caret_here && self.preedit.is_empty() {
+            if b.text.is_empty() && b.kind == Kind::Math && !caret_here {
+                let at = pos2(text.x, text.y + line / 2.0);
+                painter.text(at, Align2::LEFT_CENTER, "Add a TeX equation", FontId::proportional(line * 0.62), pal.muted);
+            } else if b.text.is_empty() && caret_here && self.preedit.is_empty() {
                 let hint = match b.kind {
                     Kind::Paragraph => "Type '/' for commands",
                     Kind::H1 => "Heading 1",
@@ -1673,6 +1770,7 @@ impl DocView {
                     Kind::Bullet | Kind::Numbered => "List",
                     Kind::Todo => "To-do",
                     Kind::Quote => "Quote",
+                    Kind::Math => "TeX, like e^{i\\pi} = -1",
                     _ => "",
                 };
                 let at = pos2(text.x, text.y + line / 2.0);

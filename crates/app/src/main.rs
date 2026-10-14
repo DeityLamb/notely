@@ -5,6 +5,7 @@
 
 mod clipboard;
 mod emoji;
+mod math;
 mod meter;
 mod scroll;
 mod storage;
