@@ -533,17 +533,8 @@ impl DocView {
         let row = &self.rows[p.block];
         let mut cursor = ccursor(&ed.blocks()[p.block], p.offset);
         cursor.prefer_next_row = next_row;
-        let mut rect = row.galley.pos_from_cursor(cursor);
-        // Kerning can tuck a glyph under the one before it ("r,"), which
-        // puts the boundary between them inside the first one's shape. Move
-        // the caret halfway out so it reads as sitting between the two.
-        let at = row.galley.layout_from_cursor(cursor);
-        let glyphs = row.galley.rows.get(at.row).map_or(&[][..], |r| &r.row.glyphs[..]);
-        if let (Some(prev), Some(next)) = (at.column.0.checked_sub(1).and_then(|c| glyphs.get(c)), glyphs.get(at.column.0)) {
-            let ink_right = prev.pos.x + prev.uv_rect.offset.x + prev.uv_rect.size.x;
-            rect = rect.translate(vec2(((ink_right - next.pos.x) / 2.0).max(0.0), 0.0));
-        }
-        rect.translate(row.text)
+        let rect = row.galley.pos_from_cursor(cursor);
+        rect.translate(vec2(ink_nudge(&row.galley, cursor), 0.0) + row.text)
     }
 
     /// The position nearest a point given in document coordinates, and
@@ -2003,7 +1994,10 @@ impl DocView {
                                 .hint_text("Paste or type a link")
                                 .frame(egui::Frame::NONE)
                                 .desired_width(240.0);
-                            let field = ui.add(field);
+                            ui.visuals_mut().text_cursor.stroke.color = Color32::TRANSPARENT;
+                            let field = field.show(ui);
+                            field_caret(ui, &field, pal.fg);
+                            let field = field.response.response;
                             if opened {
                                 field.request_focus();
                             }
@@ -2177,6 +2171,51 @@ fn tool_button(ui: &mut Ui, pal: &Palette, tool: &Tool, on: bool) -> bool {
         });
     });
     response.clicked()
+}
+
+/// A text field's caret, drawn like the document's: a pixel wide, just
+/// after the boundary between two letters, blinking while nothing changes.
+/// egui's own caret, two pixels across the boundary, sits half on the
+/// letter before and reads as left of the gap, so the field hides it.
+fn field_caret(ui: &Ui, field: &egui::text_edit::TextEditOutput, color: Color32) {
+    let Some(range) = field.cursor_range.filter(|_| field.response.response.has_focus()) else { return };
+    let now = ui.input(|i| i.time);
+    let id = field.response.response.id.with("caret");
+    let since = ui.data_mut(|d| {
+        let (seen, since) = d.get_temp_mut_or(id, (range, now));
+        if *seen != range || field.response.response.changed() {
+            (*seen, *since) = (range, now);
+        }
+        *since
+    });
+    let phase = (now - since) % (2.0 * BLINK);
+    if !ui.input(|i| i.focused) {
+        return;
+    }
+    ui.ctx().request_repaint_after_secs((BLINK - phase % BLINK) as f32);
+    if phase < BLINK {
+        let nudge = ink_nudge(&field.galley, range.primary);
+        let shift = field.galley_pos.to_vec2() + vec2(nudge - field.galley.rect.left(), 0.0);
+        let at = field.galley.pos_from_cursor(range.primary).translate(shift);
+        let bar = Rect::from_min_size(at.left_top(), vec2(1.0, at.height()));
+        ui.painter().with_clip_rect(field.text_clip_rect.expand(1.0)).rect_filled(bar, 0.0, color);
+    }
+}
+
+/// How far right of the boundary at `cursor` a caret goes. Kerning can
+/// tuck a glyph under the one before it ("r,"), and some letters reach
+/// past their width ("t."), which puts the boundary inside the first
+/// one's shape: the caret moves halfway out, to read as between the two.
+fn ink_nudge(galley: &Galley, cursor: CCursor) -> f32 {
+    let at = galley.layout_from_cursor(cursor);
+    let glyphs = galley.rows.get(at.row).map_or(&[][..], |r| &r.row.glyphs[..]);
+    match (at.column.0.checked_sub(1).and_then(|c| glyphs.get(c)), glyphs.get(at.column.0)) {
+        (Some(prev), Some(next)) => {
+            let ink_right = prev.pos.x + prev.uv_rect.offset.x + prev.uv_rect.size.x;
+            ((ink_right - next.pos.x) / 2.0).max(0.0)
+        }
+        _ => 0.0,
+    }
 }
 
 /// Lines of a toolbar icon, given on a 24 unit grid (as Lucide's icons are)
