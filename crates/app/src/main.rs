@@ -50,7 +50,7 @@ impl App {
         let meter = meter::start();
         let sample = meter.as_ref().map(|_| (Page::default(), markdown::parse(&meter::sample_document())));
         let (page, blocks) =
-            sample.unwrap_or_else(|| storage::load().and_then(|s| store::load(&s)).unwrap_or_else(welcome));
+            sample.unwrap_or_else(|| storage::load(storage::DOCUMENT).and_then(|s| store::load(&s)).unwrap_or_else(welcome));
         let ed = Editor::from_page(page, blocks);
         App {
             saved: ed.version(),
@@ -96,7 +96,7 @@ impl App {
             self.saved = self.ed.version();
             return;
         }
-        match storage::save(&store::save(self.ed.page(), self.ed.blocks())) {
+        match storage::save(storage::DOCUMENT, &store::save(self.ed.page(), self.ed.blocks())) {
             Ok(()) => self.saved = self.ed.version(),
             Err(err) => {
                 self.failed = Some(self.ed.version());
@@ -134,6 +134,8 @@ impl eframe::App for App {
             let scrolled = area.show(ui, |ui| self.view.show(ui, &mut self.ed, &palette));
             #[cfg(target_arch = "wasm32")]
             scroll::page::sync(scrolled.content_size.y, page_at, scrolled.state.offset.y);
+            #[cfg(target_arch = "wasm32")]
+            scroll::page::track_popups(ui.ctx());
             if let Some(meter) = &mut self.meter {
                 meter.show(ui.ctx(), scrolled.state.offset.y);
             }
@@ -193,11 +195,12 @@ fn main() {
         // Scrolling is the page's own (see `scroll::page`), so plain
         // vertical wheel events are left to the browser. Zooming (Ctrl) and
         // sideways swipes, which the browser may take as back and forward,
-        // are still cancelled.
+        // are still cancelled, and so is all wheel movement over a popup,
+        // which scrolls the popup.
         let options = eframe::WebOptions {
             should_prevent_default: Box::new(|event| match event {
                 egui::Event::MouseWheel { delta, modifiers, .. } => {
-                    modifiers.ctrl || modifiers.command || delta.x.abs() > delta.y.abs()
+                    modifiers.ctrl || modifiers.command || delta.x.abs() > delta.y.abs() || scroll::page::wheel_is_apps()
                 }
                 _ => true,
             }),

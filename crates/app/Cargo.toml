@@ -9,8 +9,9 @@ path = "src/main.rs"
 
 [dependencies]
 notely-core = { path = "../core" }
-# PNG decoding only, which eframe already depends on.
-image = { version = "0.25", default-features = false, features = ["png"] }
+# Twemoji: its SVGs are compressed with Brotli and drawn by resvg.
+resvg = { version = "0.48", default-features = false }
+brotli-decompressor = "5"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 eframe = { version = "=0.36.2", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }

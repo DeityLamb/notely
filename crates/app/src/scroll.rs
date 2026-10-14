@@ -275,13 +275,28 @@ impl Fling {
 pub mod page {
     use std::cell::Cell;
 
-    use eframe::egui::{Context, Event, RawInput};
+    use eframe::egui::{Context, Event, Order, RawInput};
     use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast as _;
 
     thread_local! {
         /// Height last given to the page, to leave the page alone otherwise.
         static HEIGHT: Cell<f32> = const { Cell::new(0.0) };
+        /// The pointer was over a popup on the last frame.
+        static OVER_POPUP: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Notes whether the pointer is over a popup, such as the emoji picker:
+    /// its list scrolls by the wheel, not the page. Call after each frame.
+    pub fn track_popups(ctx: &Context) {
+        let layer = ctx.pointer_hover_pos().and_then(|at| ctx.layer_id_at(at));
+        OVER_POPUP.set(layer.is_some_and(|layer| layer.order == Order::Foreground));
+    }
+
+    /// Whether wheel events are the app's: over a popup, the page must not
+    /// scroll for them.
+    pub fn wheel_is_apps() -> bool {
+        OVER_POPUP.get()
     }
 
     /// Redraws whenever the page scrolls. Call once at start-up.
@@ -298,6 +313,9 @@ pub mod page {
     /// page has already scrolled for them. Sideways movement is left in,
     /// the page has no use for it and unwrapped code blocks do.
     pub fn leave_wheel_to_page(input: &mut RawInput) {
+        if wheel_is_apps() {
+            return;
+        }
         input.events.retain_mut(|event| match event {
             Event::MouseWheel { delta, .. } => {
                 delta.y = 0.0;
