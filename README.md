@@ -83,7 +83,8 @@ rustup installs them on first use.
 Selecting text shows the formatting toolbar: bold, italic, underline,
 strikethrough, inline code and link, each with its name and shortcut on hover.
 
-Hovering a link shows its address with Copy and Edit; clicking opens it.
+Hovering a link shows its address with buttons to open, copy, edit and remove
+it; clicking it opens it.
 Ctrl+K or the toolbar's Link button on a selection, or Ctrl+K with the caret in
 a link, edits the address.
 

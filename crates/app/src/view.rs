@@ -83,16 +83,21 @@ const ITEMS: [(&str, &str, &str, Kind); 10] = [
     ("Divider", "---", "hr rule line separator", Kind::Divider),
 ];
 
-/// A button of the formatting toolbar: its name and shortcut, as its
-/// tooltip gives them, and its icon.
+/// A button of the formatting toolbar or the link popup: its name and
+/// shortcut, as its tooltip gives them, and its icon.
 struct Tool {
     name: &'static str,
-    keys: KeyboardShortcut,
+    keys: Option<KeyboardShortcut>,
     icon: fn(&Icon),
 }
 
 const fn tool(name: &'static str, modifiers: Modifiers, key: Key, icon: fn(&Icon)) -> Tool {
-    Tool { name, keys: KeyboardShortcut::new(modifiers, key), icon }
+    Tool { name, keys: Some(KeyboardShortcut::new(modifiers, key)), icon }
+}
+
+/// A button with no shortcut.
+const fn action(name: &'static str, icon: fn(&Icon)) -> Tool {
+    Tool { name, keys: None, icon }
 }
 
 /// The formatting toolbar's buttons for marks, with the mark each toggles.
@@ -104,6 +109,13 @@ const MARK_TOOLS: [(u8, Tool); 5] = [
     (mark::CODE, tool("Inline code", Modifiers::COMMAND, Key::E, code_icon)),
 ];
 const LINK_TOOL: Tool = tool("Link", Modifiers::COMMAND, Key::K, link_icon);
+/// The link popup's buttons.
+const OPEN_TOOL: Tool = action("Open link", open_icon);
+const COPY_TOOL: Tool = action("Copy link", sheets_icon);
+const COPIED_TOOL: Tool = action("Copied", tick_icon);
+const EDIT_TOOL: Tool = action("Edit link", pencil_icon);
+const UNLINK_TOOL: Tool = action("Remove link", unlink_icon);
+const APPLY_TOOL: Tool = tool("Apply", Modifiers::NONE, Key::Enter, tick_icon);
 /// Side of a toolbar button.
 const TOOL: f32 = 28.0;
 
@@ -1942,9 +1954,10 @@ impl DocView {
         match &mut self.link {
             LinkUi::View { url, away, copied, .. } => {
                 let shown = area.show(ctx, |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    egui::Frame::popup(ui.style()).inner_margin(4.0).show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            let (rect, _) = ui.allocate_exact_size(vec2(16.0, 20.0), Sense::hover());
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            let (rect, _) = ui.allocate_exact_size(vec2(24.0, TOOL), Sense::hover());
                             globe(ui.painter(), rect.center(), pal.muted);
                             let mut text: String = url.chars().take(48).collect();
                             if text.len() < url.len() {
@@ -1952,19 +1965,21 @@ impl DocView {
                             }
                             let text = egui::RichText::new(text).size(12.5).color(pal.muted);
                             ui.add(egui::Label::new(text).selectable(false));
-                            let done = copied.is_some_and(|at| now - at < COPIED);
-                            let (rect, copy) = ui.allocate_exact_size(vec2(24.0, 20.0), Sense::click());
-                            let copy = copy.on_hover_cursor(CursorIcon::PointingHand);
-                            if copy.hovered() {
-                                ui.painter().rect_filled(rect, 4.0, ui.visuals().widgets.hovered.weak_bg_fill);
+                            ui.add_space(6.0);
+                            let open = openable(url);
+                            if open.is_some() && tool_button(ui, pal, &OPEN_TOOL, false) {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(open.unwrap_or_default()));
                             }
-                            copy_icon(ui.painter(), rect.center(), done, ui.visuals().text_color());
-                            if copy.on_hover_text("Copy link").clicked() {
+                            let done = copied.is_some_and(|at| now - at < COPIED);
+                            if tool_button(ui, pal, if done { &COPIED_TOOL } else { &COPY_TOOL }, false) {
                                 ui.ctx().copy_text(url.to_string());
                                 *copied = Some(now);
                                 ui.ctx().request_repaint_after_secs(COPIED as f32);
                             }
-                            edit = ui.button("Edit").clicked();
+                            edit = tool_button(ui, pal, &EDIT_TOOL, false);
+                            if tool_button(ui, pal, &UNLINK_TOOL, false) {
+                                apply = Some(None);
+                            }
                         });
                     });
                 });
@@ -1979,20 +1994,25 @@ impl DocView {
             LinkUi::Edit { input, had_link, fresh, .. } => {
                 let opened = std::mem::take(fresh);
                 let shown = area.show(ctx, |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    egui::Frame::popup(ui.style()).inner_margin(4.0).show(ui, |ui| {
                         ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            let (rect, _) = ui.allocate_exact_size(vec2(24.0, TOOL), Sense::hover());
+                            globe(ui.painter(), rect.center(), pal.muted);
                             let field = egui::TextEdit::singleline(input)
                                 .hint_text("Paste or type a link")
+                                .frame(egui::Frame::NONE)
                                 .desired_width(240.0);
                             let field = ui.add(field);
                             if opened {
                                 field.request_focus();
                             }
+                            ui.add_space(6.0);
                             let enter = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                            if enter || ui.button("Apply").clicked() {
+                            if tool_button(ui, pal, &APPLY_TOOL, false) || enter {
                                 apply = Some(Some(input.trim().to_owned()).filter(|url| !url.is_empty()));
                             }
-                            if *had_link && ui.button("Remove").clicked() {
+                            if *had_link && tool_button(ui, pal, &UNLINK_TOOL, false) {
                                 apply = Some(None);
                             }
                         });
@@ -2131,7 +2151,7 @@ fn copy_icon(painter: &Painter, c: Pos2, done: bool, color: Color32) {
     painter.rect_stroke(sheet(c + vec2(1.5, 1.5)), 1.5, stroke, StrokeKind::Middle);
 }
 
-/// A square button of the formatting toolbar, tinted while `on`, with a
+/// A square button of the formatting toolbar or the link popup, tinted while `on`, with a
 /// tooltip above it. Returns whether it was clicked.
 fn tool_button(ui: &mut Ui, pal: &Palette, tool: &Tool, on: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(TOOL, TOOL), Sense::click());
@@ -2151,7 +2171,9 @@ fn tool_button(ui: &mut Ui, pal: &Palette, tool: &Tool, on: bool) -> bool {
     tip.show(|ui| {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(tool.name).color(pal.fg));
-            ui.label(egui::RichText::new(ui.ctx().format_shortcut(&tool.keys)).color(pal.muted));
+            if let Some(keys) = &tool.keys {
+                ui.label(egui::RichText::new(ui.ctx().format_shortcut(keys)).color(pal.muted));
+            }
         });
     });
     response.clicked()
@@ -2187,6 +2209,12 @@ fn arc(c: (f32, f32), r: f32, from: f32, to: f32) -> impl Iterator<Item = (f32, 
         let (sin, cos) = ((from + (to - from) * i as f32 / steps as f32) * std::f32::consts::TAU).sin_cos();
         (c.0 + r * cos, c.1 + r * sin)
     })
+}
+
+/// Rounded corners of a box, each a quarter circle of radius 2 around the
+/// given point, starting at the given turn.
+fn corners<const N: usize>(at: [(f32, f32, f32); N]) -> impl Iterator<Item = (f32, f32)> {
+    at.into_iter().flat_map(|(x, y, from)| arc((x, y), 2.0, from, from + 0.25))
 }
 
 /// A B, in heavier lines than the other icons: an upright stroke with two
@@ -2231,4 +2259,40 @@ fn link_icon(icon: &Icon) {
     icon.line([(9.0, 17.0)].into_iter().chain(arc((7.0, 12.0), 5.0, 0.25, 0.75)).chain([(9.0, 7.0)]));
     icon.line([(15.0, 7.0)].into_iter().chain(arc((17.0, 12.0), 5.0, -0.25, 0.25)).chain([(15.0, 17.0)]));
     icon.line([(8.0, 12.0), (16.0, 12.0)]);
+}
+
+/// An arrow leaving a box.
+fn open_icon(icon: &Icon) {
+    icon.line([(15.0, 3.0), (21.0, 3.0), (21.0, 9.0)]);
+    icon.line([(10.0, 14.0), (21.0, 3.0)]);
+    let corners = corners([(16.0, 19.0, 0.0), (5.0, 19.0, 0.25), (5.0, 8.0, 0.5)]);
+    icon.line([(18.0, 13.0)].into_iter().chain(corners).chain([(11.0, 6.0)]));
+}
+
+/// Two sheets, one in front of the other.
+fn sheets_icon(icon: &Icon) {
+    icon.line(corners([(4.0, 14.0, 0.25), (4.0, 4.0, 0.5), (14.0, 4.0, 0.75)]));
+    let front = corners([(10.0, 10.0, 0.5), (20.0, 10.0, 0.75), (20.0, 20.0, 0.0), (10.0, 20.0, 0.25)]);
+    icon.line(front.chain([(8.0, 10.0)]));
+}
+
+/// A tick.
+fn tick_icon(icon: &Icon) {
+    icon.line([(4.0, 12.0), (9.0, 17.0), (20.0, 6.0)]);
+}
+
+/// A pencil, writing down to the left.
+fn pencil_icon(icon: &Icon) {
+    let icon = Icon { turn: -0.125, ..*icon };
+    let body = arc((19.0, 12.0), 4.0, -0.25, 0.25).chain([(8.0, 16.0), (1.5, 12.0), (8.0, 8.0), (19.0, 8.0)]);
+    icon.line(body);
+    icon.line([(15.0, 8.0), (15.0, 16.0)]);
+}
+
+/// The two links of a chain apart, cut between.
+fn unlink_icon(icon: &Icon) {
+    let icon = Icon { turn: -0.125, ..*icon };
+    icon.line([(9.0, 17.0)].into_iter().chain(arc((7.0, 12.0), 5.0, 0.25, 0.75)).chain([(9.0, 7.0)]));
+    icon.line([(15.0, 7.0)].into_iter().chain(arc((17.0, 12.0), 5.0, -0.25, 0.25)).chain([(15.0, 17.0)]));
+    icon.line([(12.0, 4.0), (12.0, 20.0)]);
 }
