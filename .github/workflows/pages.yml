@@ -1,4 +1,4 @@
-name: Deploy GitHub Pages
+name: Publish GitHub Pages
 
 # The site is the gh-pages branch: main at its root, and each open pull
 # request at pr-preview/pr-<number>/, removed when the pull request closes.
