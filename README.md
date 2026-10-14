@@ -37,6 +37,7 @@ rustup installs them on first use.
   - `main.rs` start-up on each platform, autosave
   - `view.rs` the document widget: layout, painting, keyboard and pointer input
   - `theme.rs` colours, fonts and text styles
+  - `colors.rs` the toolbar's colour button and picker
   - `emoji/` emoji drawn by Twemoji, rendered from SVG at the size shown,
     and the emoji picker. The list and the images are in `crates/app/emoji/`
     (Twemoji CC-BY 4.0, names and search words from Emojibase, MIT; built by
@@ -81,7 +82,14 @@ rustup installs them on first use.
 | Ctrl+Z / Ctrl+Shift+Z | undo / redo |
 
 Selecting text shows the formatting toolbar: bold, italic, underline,
-strikethrough, inline code and link, each with its name and shortcut on hover.
+strikethrough, inline code, colour and link, each with its name and shortcut on
+hover.
+
+The toolbar's colour button (an underlined A) gives the selected text a
+colour or a background, from Notion's muted set; Default takes it away, and
+the last few choices are kept under Recently used. Typing on after coloured
+text keeps the colour. In Markdown the colours are written as HTML,
+`<span style="color:red;background:yellow">`, and read back.
 
 Hovering a link shows its address with buttons to open, copy, edit and remove
 it; clicking it opens it.

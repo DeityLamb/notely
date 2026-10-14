@@ -5,7 +5,7 @@ use std::sync::Arc;
 use eframe::egui::text::{LayoutJob, TextFormat};
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId};
 use notely_core::highlight::{highlight, Token};
-use notely_core::{mark, Attrs, Block, Kind};
+use notely_core::{mark, Attrs, Block, Kind, COLORS};
 
 /// Width of one indent level and of the list marker gutter.
 pub const STEP: f32 = 26.0;
@@ -74,6 +74,11 @@ pub struct Palette {
     /// Colours of code: comments, strings, numbers, keywords, types and
     /// called names.
     pub syntax: [Color32; 6],
+    /// The colours of `notely_core::COLORS`, for text and for the
+    /// background behind it. The first, the default, is `fg` and no
+    /// background.
+    pub text: [Color32; COLORS.len()],
+    pub back: [Color32; COLORS.len()],
 }
 
 impl Palette {
@@ -101,6 +106,30 @@ impl Palette {
                     rgb(0xc7, 0x7d, 0xbb),
                     rgb(0x56, 0xa8, 0xf5),
                 ],
+                text: [
+                    rgb(0xe3, 0xe2, 0xde),
+                    hex(0x9b_9b_9b),
+                    hex(0xba_85_6f),
+                    hex(0xc7_7d_48),
+                    hex(0xca_98_49),
+                    hex(0x52_9e_72),
+                    hex(0x5e_87_c9),
+                    hex(0x9d_68_d3),
+                    hex(0xd1_57_96),
+                    hex(0xdf_54_52),
+                ],
+                back: [
+                    Color32::TRANSPARENT,
+                    hex(0x2f_2f_2f),
+                    hex(0x4a_32_28),
+                    hex(0x5c_3b_23),
+                    hex(0x56_43_28),
+                    hex(0x24_3d_30),
+                    hex(0x14_3a_4e),
+                    hex(0x3c_2d_49),
+                    hex(0x4e_2c_3c),
+                    hex(0x52_2e_2a),
+                ],
             }
         } else {
             Palette {
@@ -122,6 +151,30 @@ impl Palette {
                     rgb(0x00, 0x33, 0xb3),
                     rgb(0x87, 0x10, 0x94),
                     rgb(0x00, 0x62, 0x7a),
+                ],
+                text: [
+                    rgb(0x2b, 0x2a, 0x27),
+                    hex(0x78_77_74),
+                    hex(0x9f_6b_53),
+                    hex(0xd9_73_0d),
+                    hex(0xcb_91_2f),
+                    hex(0x44_83_61),
+                    hex(0x33_7e_a9),
+                    hex(0x90_65_b0),
+                    hex(0xc1_4c_8a),
+                    hex(0xd4_4c_47),
+                ],
+                back: [
+                    Color32::TRANSPARENT,
+                    hex(0xf1_f1_ef),
+                    hex(0xf4_ee_ee),
+                    hex(0xfb_ec_dd),
+                    hex(0xfb_f3_db),
+                    hex(0xed_f3_ec),
+                    hex(0xe7_f3_f8),
+                    hex(0xf6_f3_f9),
+                    hex(0xfa_f1_f5),
+                    hex(0xfd_eb_ec),
                 ],
             }
         }
@@ -171,11 +224,15 @@ pub fn metrics(kind: Kind) -> (f32, f32) {
     }
 }
 
-/// Colour of a run of a block's text.
+/// Colour of a run of a block's text: a colour given to it wins over that
+/// of inline code and links, but done to-dos are muted all the same.
 pub fn color(b: &Block, attrs: &Attrs, pal: &Palette) -> Color32 {
-    if attrs.marks & mark::CODE != 0 && b.kind != Kind::Code {
+    let done = b.kind == Kind::Todo && b.checked;
+    if attrs.color != 0 && !done {
+        pal.text[usize::from(attrs.color)]
+    } else if attrs.marks & mark::CODE != 0 && b.kind != Kind::Code {
         pal.code_fg
-    } else if (b.kind == Kind::Todo && b.checked) || attrs.link.is_some() {
+    } else if done || attrs.link.is_some() {
         pal.muted
     } else {
         pal.fg

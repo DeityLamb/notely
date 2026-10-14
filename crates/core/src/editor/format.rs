@@ -1,11 +1,11 @@
-//! Formatting: marks and links on text, and the type of a block.
+//! Formatting: marks, colours and links on text, and the type of a block.
 
 use std::rc::Rc;
 
 use super::history::Edit;
 use super::Editor;
 use crate::doc::{Kind, Pos, Selection};
-use crate::text::RichText;
+use crate::text::{Attrs, RichText, COLORS};
 
 impl Editor {
     pub fn toggle_mark(&mut self, m: u8) {
@@ -26,6 +26,42 @@ impl Editor {
         self.begin(Edit::Other);
         for (i, r) in ranges {
             self.touch(i).text.set_mark(r, m, on);
+        }
+        self.end();
+    }
+
+    /// Colours the selected text, or text typed next at the caret: an index
+    /// into `COLORS`, 0 taking the colour away.
+    pub fn set_color(&mut self, color: u8) {
+        self.restyle(color, |a| &mut a.color);
+    }
+
+    /// Sets the background of the selected text, or of text typed next at
+    /// the caret, like `set_color`.
+    pub fn set_background(&mut self, bg: u8) {
+        self.restyle(bg, |a| &mut a.bg);
+    }
+
+    fn restyle(&mut self, value: u8, field: impl Fn(&mut Attrs) -> &mut u8) {
+        if usize::from(value) >= COLORS.len() {
+            return;
+        }
+        if self.sel.is_collapsed() {
+            let pos = self.sel.focus;
+            if self.blocks[pos.block].kind.is_rich() {
+                let mut attrs = self.attrs_here(pos);
+                *field(&mut attrs) = value;
+                self.pending = Some((pos, attrs));
+            }
+            return;
+        }
+        let ranges = self.sel_ranges();
+        if ranges.is_empty() {
+            return;
+        }
+        self.begin(Edit::Other);
+        for (i, r) in ranges {
+            self.touch(i).text.restyle(r, |a| *field(a) = value);
         }
         self.end();
     }
