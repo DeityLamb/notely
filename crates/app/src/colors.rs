@@ -10,6 +10,7 @@ use notely_core::{Editor, COLORS};
 
 use crate::storage;
 use crate::theme::Palette;
+use crate::view::{tool_tip, TOOL};
 
 const COLUMNS: usize = 5;
 const CELL: f32 = 32.0;
@@ -95,12 +96,11 @@ impl ColorPicker {
         }
         self.shown = pass;
         let (color, bg) = ed.active_colors();
-        let height = ui.spacing().interact_size.y;
-        let (rect, response) = ui.allocate_exact_size(vec2(height, height), Sense::click());
+        let (rect, response) = ui.allocate_exact_size(vec2(TOOL, TOOL), Sense::click());
         let response = response.on_hover_cursor(CursorIcon::PointingHand);
         let painter = ui.painter();
         if response.hovered() || self.open {
-            painter.rect_filled(rect, 4.0, ui.visuals().widgets.hovered.weak_bg_fill);
+            painter.rect_filled(rect, 5.0, ui.visuals().widgets.hovered.weak_bg_fill);
         }
         let letters = Rect::from_center_size(rect.center(), vec2(14.0, 16.0));
         if let Some(bg) = bg.filter(|&bg| bg != 0) {
@@ -110,7 +110,8 @@ impl ColorPicker {
         painter.text(letters.center() - vec2(0.0, 1.5), Align2::CENTER_CENTER, "A", FontId::proportional(14.0), ink);
         let bar = Rect::from_min_max(pos2(letters.left(), letters.bottom() - 2.0), letters.right_bottom());
         painter.rect_filled(bar, 1.0, ink);
-        let clicked = response.on_hover_text("Color").clicked();
+        tool_tip(&response, pal, "Color", None);
+        let clicked = response.clicked();
         if clicked {
             self.open = !self.open;
             self.load();

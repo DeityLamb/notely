@@ -81,13 +81,18 @@ rustup installs them on first use.
 | Shift+Enter | line break inside a block |
 | Ctrl+Z / Ctrl+Shift+Z | undo / redo |
 
+Selecting text shows the formatting toolbar: bold, italic, underline,
+strikethrough, inline code, colour and link, each with its name and shortcut on
+hover.
+
 The toolbar's colour button (an underlined A) gives the selected text a
 colour or a background, from Notion's muted set; Default takes it away, and
 the last few choices are kept under Recently used. Typing on after coloured
 text keeps the colour. In Markdown the colours are written as HTML,
 `<span style="color:red;background:yellow">`, and read back.
 
-Hovering a link shows its address with Copy and Edit; clicking opens it.
+Hovering a link shows its address with buttons to open, copy, edit and remove
+it; clicking it opens it.
 Ctrl+K or the toolbar's Link button on a selection, or Ctrl+K with the caret in
 a link, edits the address.
 
