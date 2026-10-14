@@ -20,6 +20,7 @@ use eframe::egui::{
 use notely_core::highlight::LANGUAGES;
 use notely_core::{mark, Attrs, Block, Editor, Kind, Pos, Selection};
 
+use crate::colors::ColorPicker;
 use crate::emoji::{self, picker::{Choice, EmojiPicker}};
 use crate::theme::{self, Palette, BODY, STEP};
 
@@ -273,6 +274,7 @@ pub struct DocView {
     /// The open icon or cover picker, and whether it opened on this frame.
     picker: Option<(Picker, bool)>,
     emoji_picker: EmojiPicker,
+    colors: ColorPicker,
 }
 
 /// Left and right space between the text column's edges and a block's text.
@@ -1653,7 +1655,8 @@ impl DocView {
                 _ => {}
             }
 
-            if b.kind != Kind::Divider && b.kind != Kind::Code {
+            if b.kind.is_rich() {
+                color_backgrounds(painter, b, &row.galley, text, pal);
                 code_backgrounds(painter, b, &row.galley, text, pal.code_bg);
             }
             if b.kind != Kind::Divider {
@@ -1897,6 +1900,7 @@ impl DocView {
                             }
                         }
                         ui.separator();
+                        self.colors.button(ui, ed, pal);
                         link = ui.selectable_label(ed.link().is_some(), "Link").clicked();
                     });
                 });
@@ -2009,36 +2013,61 @@ fn run_pieces(b: &Block, galley: &Galley, wanted: impl Fn(&Attrs) -> bool, mut d
     for (s, attrs) in b.text.runs() {
         let (from, to) = (at, at + s.len());
         at = to;
-        if !wanted(attrs) {
-            continue;
-        }
-        let mut start = ccursor(b, from);
-        start.prefer_next_row = true;
-        let a = galley.pos_from_cursor(start);
-        let z = galley.pos_from_cursor(ccursor(b, to));
-        for line in &galley.rows {
-            let line = line.rect();
-            if line.bottom() <= a.top() + 1.0 || line.top() >= z.bottom() - 1.0 {
-                continue;
-            }
-            let left = if line.top() <= a.top() + 1.0 { a.left() } else { line.left() };
-            let right = if line.bottom() >= z.bottom() - 1.0 { z.right() } else { line.right() };
-            if right > left {
-                draw(Rect::from_min_max(pos2(left, line.top()), pos2(right, line.bottom())), attrs);
-            }
+        if wanted(attrs) {
+            pieces(b, galley, from..to, |piece| draw(piece, attrs));
         }
     }
 }
 
-/// Rounded backgrounds behind a block's inline code, as tall as the
-/// letters rather than the line.
-fn code_backgrounds(painter: &Painter, b: &Block, galley: &Galley, text: Pos2, color: Color32) {
+/// Calls `draw` with each piece of line that the text in `range` covers,
+/// as `run_pieces` does for a run.
+fn pieces(b: &Block, galley: &Galley, range: Range<usize>, mut draw: impl FnMut(Rect)) {
+    let mut start = ccursor(b, range.start);
+    start.prefer_next_row = true;
+    let a = galley.pos_from_cursor(start);
+    let z = galley.pos_from_cursor(ccursor(b, range.end));
+    for line in &galley.rows {
+        let line = line.rect();
+        if line.bottom() <= a.top() + 1.0 || line.top() >= z.bottom() - 1.0 {
+            continue;
+        }
+        let left = if line.top() <= a.top() + 1.0 { a.left() } else { line.left() };
+        let right = if line.bottom() >= z.bottom() - 1.0 { z.right() } else { line.right() };
+        if right > left {
+            draw(Rect::from_min_max(pos2(left, line.top()), pos2(right, line.bottom())));
+        }
+    }
+}
+
+/// The rounded background of a piece of line, as tall as the letters
+/// rather than the line and a little wider than them.
+fn letter_background(painter: &Painter, b: &Block, piece: Rect, text: Pos2, color: Color32) {
     let half = theme::metrics(b.kind).0 * 0.6;
-    run_pieces(b, galley, |attrs| attrs.marks & mark::CODE != 0, |piece, _| {
-        let min = pos2(piece.left() - 2.5, piece.center().y - half);
-        let max = pos2(piece.right() + 2.5, piece.center().y + half);
-        painter.rect_filled(Rect::from_min_max(min, max).translate(text.to_vec2()), INLINE_CODE_RADIUS, color);
-    });
+    let min = pos2(piece.left() - 2.5, piece.center().y - half);
+    let max = pos2(piece.right() + 2.5, piece.center().y + half);
+    painter.rect_filled(Rect::from_min_max(min, max).translate(text.to_vec2()), INLINE_CODE_RADIUS, color);
+}
+
+/// Backgrounds given to a block's text, one for each stretch of text with
+/// the same background, however its other formatting changes.
+fn color_backgrounds(painter: &Painter, b: &Block, galley: &Galley, text: Pos2, pal: &Palette) {
+    let runs: Vec<(usize, u8)> = b.text.raw_runs().iter().map(|r| (r.len, r.attrs.bg)).collect();
+    let mut at = 0;
+    for stretch in runs.chunk_by(|x, y| x.1 == y.1) {
+        let (len, bg) = (stretch.iter().map(|r| r.0).sum::<usize>(), stretch[0].1);
+        if bg != 0 {
+            let color = pal.back[usize::from(bg)];
+            pieces(b, galley, at..at + len, |piece| letter_background(painter, b, piece, text, color));
+        }
+        at += len;
+    }
+}
+
+/// Rounded backgrounds behind a block's inline code that has no background
+/// of its own.
+fn code_backgrounds(painter: &Painter, b: &Block, galley: &Galley, text: Pos2, color: Color32) {
+    let wanted = |attrs: &Attrs| attrs.marks & mark::CODE != 0 && attrs.bg == 0;
+    run_pieces(b, galley, wanted, |piece, _| letter_background(painter, b, piece, text, color));
 }
 
 /// Underlines (of links and underlined text) and strike-through (of struck
