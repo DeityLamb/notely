@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notely</title>
+  <link rel="icon" href="data:,">
+  <style>
+    /* The page scrolls, not the app: #height is as tall as the document and
+       the canvas stays fixed over it, drawing at the page's scroll position. */
+    html, body { margin: 0; background: #fff; color: #8f8d86; }
+    html { scrollbar-width: thin; scrollbar-color: #c9c7c0 transparent; }
+    @media (prefers-color-scheme: dark) {
+      html, body { background: #191919; color: #8a8882; color-scheme: dark; }
+      html { scrollbar-color: #4a4a48 transparent; }
+    }
+    canvas { position: fixed; inset: 0; display: block; width: 100%; height: 100%; outline: none; }
+    #status { position: fixed; inset: 0; display: grid; place-items: center; font: 14px system-ui, sans-serif; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="height"></div>
+  <div id="status">Loading…</div>
+  <script type="module">
+    import init from "./pkg/notely.js";
+
+    // Keep the browser from acting on the editor's own shortcuts (Ctrl+K
+    // would open its search, Ctrl+B its bookmarks, Ctrl+U the page source).
+    // The app still receives the key.
+    addEventListener("keydown", (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const key = e.key.toLowerCase();
+      const plain = !e.shiftKey && "abeiku".includes(key) && key.length === 1;
+      const shifted = e.shiftKey && (/^Digit[0-8]$/.test(e.code) || ["s", "x", "arrowup", "arrowdown"].includes(key));
+      if (plain || shifted) e.preventDefault();
+    }, true);
+
+    const status = document.getElementById("status");
+    init({ module_or_path: "./pkg/notely_bg.wasm" }).then(
+      () => status.remove(),
+      (err) => { status.textContent = "Notely could not start: " + err; },
+    );
+  </script>
+</body>
+</html>
