@@ -13,15 +13,25 @@ pub mod mark {
     pub const ALL: [u8; 5] = [BOLD, ITALIC, UNDERLINE, STRIKE, CODE];
 }
 
+/// The colours text and its background can have, by name; `Attrs` holds an
+/// index into this list, 0 meaning none. The order is part of the saved
+/// format: new colours go at the end.
+pub const COLORS: [&str; 10] =
+    ["default", "gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
+
 #[derive(Clone, PartialEq, Eq, Default, Debug)]
 pub struct Attrs {
     pub marks: u8,
+    /// Colour of the letters and of the background behind them: indices
+    /// into `COLORS`.
+    pub color: u8,
+    pub bg: u8,
     pub link: Option<Rc<str>>,
 }
 
 impl Attrs {
     pub fn is_plain(&self) -> bool {
-        self.marks == 0 && self.link.is_none()
+        self.marks == 0 && self.color == 0 && self.bg == 0 && self.link.is_none()
     }
 }
 
@@ -173,6 +183,25 @@ impl RichText {
         !r.is_empty()
     }
 
+    /// The value `get` gives every char in `r`, if they all agree.
+    pub fn shared<T: PartialEq>(&self, r: Range<usize>, get: impl Fn(&Attrs) -> T) -> Option<T> {
+        let mut shared = None;
+        let mut start = 0;
+        for run in &self.runs {
+            let end = start + run.len;
+            if start < r.end && end > r.start {
+                let value = get(&run.attrs);
+                match &shared {
+                    Some(s) if *s != value => return None,
+                    Some(_) => {}
+                    None => shared = Some(value),
+                }
+            }
+            start = end;
+        }
+        shared
+    }
+
     pub fn push(&mut self, s: &str, attrs: &Attrs) {
         self.insert(self.text.len(), s, attrs);
     }
@@ -233,7 +262,7 @@ impl RichText {
     }
 
     pub fn set_mark(&mut self, r: Range<usize>, mark: u8, on: bool) {
-        self.for_range(r, |a| {
+        self.restyle(r, |a| {
             if on {
                 a.marks |= mark;
             } else {
@@ -243,10 +272,11 @@ impl RichText {
     }
 
     pub fn set_link(&mut self, r: Range<usize>, link: Option<Rc<str>>) {
-        self.for_range(r, |a| a.link = link.clone());
+        self.restyle(r, |a| a.link = link.clone());
     }
 
-    fn for_range(&mut self, r: Range<usize>, mut f: impl FnMut(&mut Attrs)) {
+    /// Changes the attributes of the text in `r` with `f`.
+    pub fn restyle(&mut self, r: Range<usize>, mut f: impl FnMut(&mut Attrs)) {
         if r.is_empty() {
             return;
         }

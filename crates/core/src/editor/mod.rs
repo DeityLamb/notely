@@ -132,6 +132,22 @@ impl Editor {
             .sum()
     }
 
+    /// Text colour and background at the caret, or of the whole selection;
+    /// `None` where the selection has more than one.
+    pub fn active_colors(&self) -> (Option<u8>, Option<u8>) {
+        if self.sel.is_collapsed() {
+            let attrs = self.attrs_here(self.sel.focus);
+            return (Some(attrs.color), Some(attrs.bg));
+        }
+        let ranges = self.sel_ranges();
+        let shared = |get: fn(&Attrs) -> u8| {
+            let mut values = ranges.iter().map(|(i, r)| self.blocks[*i].text.shared(r.clone(), get));
+            let first = values.next()??;
+            values.all(|v| v == Some(first)).then_some(first)
+        };
+        (shared(|a| a.color), shared(|a| a.bg))
+    }
+
     /// Link at the start of the selection.
     pub fn link(&self) -> Option<Rc<str>> {
         let p = self.sel.start();

@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use super::parse::prefix;
 use crate::doc::{Block, Kind, MAX_INDENT};
-use crate::text::{mark, RichText};
+use crate::text::{mark, RichText, COLORS};
 
 pub fn serialize(blocks: &[Block]) -> String {
     let mut out = String::new();
@@ -80,20 +80,31 @@ fn write_inline(text: &RichText, out: &mut String) {
     // Indices into MARKS of the currently open marks, outermost first.
     let mut open: Vec<usize> = Vec::new();
     let mut link: Option<Rc<str>> = None;
+    // Text colour and background of the open span, inside the link.
+    let mut colors = (0, 0);
     let close_to = |open: &mut Vec<usize>, depth: usize, out: &mut String| {
         while open.len() > depth {
             out.push_str(MARKS[open.pop().unwrap()].2);
         }
     };
     for (s, attrs) in text.runs() {
-        if attrs.link != link {
+        if attrs.link != link || (attrs.color, attrs.bg) != colors {
             close_to(&mut open, 0, out);
-            if let Some(url) = link.take() {
-                out.push_str(&format!("]({url})"));
+            if colors != (0, 0) {
+                out.push_str("</span>");
             }
-            if attrs.link.is_some() {
-                out.push('[');
-                link = attrs.link.clone();
+            if attrs.link != link {
+                if let Some(url) = link.take() {
+                    out.push_str(&format!("]({url})"));
+                }
+                if attrs.link.is_some() {
+                    out.push('[');
+                    link = attrs.link.clone();
+                }
+            }
+            colors = (attrs.color, attrs.bg);
+            if colors != (0, 0) {
+                out.push_str(&color_span(colors));
             }
         }
         if let Some(depth) = open.iter().position(|&k| attrs.marks & MARKS[k].0 == 0) {
@@ -123,7 +134,22 @@ fn write_inline(text: &RichText, out: &mut String) {
         }
     }
     close_to(&mut open, 0, out);
+    if colors != (0, 0) {
+        out.push_str("</span>");
+    }
     if let Some(url) = link {
         out.push_str(&format!("]({url})"));
     }
+}
+
+/// Opening tag of a span of coloured text, naming its colours as CSS does.
+fn color_span((color, bg): (u8, u8)) -> String {
+    let mut style = Vec::new();
+    if color != 0 {
+        style.push(format!("color:{}", COLORS[usize::from(color)]));
+    }
+    if bg != 0 {
+        style.push(format!("background:{}", COLORS[usize::from(bg)]));
+    }
+    format!("<span style=\"{}\">", style.join(";"))
 }

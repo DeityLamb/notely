@@ -1,4 +1,4 @@
-use notely_core::{mark, markdown, store, Editor, Kind, Page, Pos, Selection};
+use notely_core::{mark, markdown, store, Editor, Kind, Page, Pos, Selection, COLORS};
 
 fn typed(e: &mut Editor, s: &str) {
     for c in s.chars() {
@@ -241,6 +241,39 @@ fn toggle_mark_on_selection_and_caret() {
     assert!(!e.blocks()[0].text.has_mark(10..11, mark::ITALIC));
 }
 
+fn color(name: &str) -> u8 {
+    COLORS.iter().position(|c| *c == name).unwrap() as u8
+}
+
+#[test]
+fn colors_on_selection_and_caret() {
+    let mut e = editor("hello world");
+    let (red, blue) = (color("red"), color("blue"));
+    select(&mut e, (0, 0), (0, 5));
+    e.set_color(red);
+    e.set_background(blue);
+    assert_eq!(e.active_colors(), (Some(red), Some(blue)));
+    select(&mut e, (0, 3), (0, 8));
+    assert_eq!(e.active_colors(), (None, None), "the selection has more than one colour");
+    e.set_background(0);
+    assert_eq!(e.active_colors(), (None, Some(0)));
+    let runs: Vec<_> = e.blocks()[0].text.runs().map(|(s, a)| (s, a.color, a.bg)).collect();
+    assert_eq!(runs, [("hel", red, blue), ("lo", red, 0), (" world", 0, 0)]);
+    e.set_color(COLORS.len() as u8);
+    assert_eq!(e.active_colors().0, None, "an unknown colour is not applied");
+
+    // Typed text carries on the colour before it, or the one set at the caret.
+    select(&mut e, (0, 5), (0, 5));
+    typed(&mut e, "!");
+    assert_eq!(e.blocks()[0].text.attrs_at(6).color, red);
+    select(&mut e, (0, 12), (0, 12));
+    e.set_color(color("green"));
+    assert_eq!(e.active_colors(), (Some(color("green")), Some(0)));
+    typed(&mut e, "ok");
+    assert_eq!(e.blocks()[0].text.attrs_at(14).color, color("green"));
+    assert_eq!(e.blocks()[0].text.attrs_at(12).color, 0);
+}
+
 #[test]
 fn move_blocks_keeps_selection_on_them() {
     let mut e = editor("a\nb\nc");
@@ -465,6 +498,39 @@ fn store_round_trip() {
 }
 
 #[test]
+fn colors_are_saved_and_copied() {
+    let mut e = editor("plain red both");
+    select(&mut e, (0, 6), (0, 14));
+    e.set_color(color("red"));
+    select(&mut e, (0, 10), (0, 14));
+    e.set_background(color("yellow"));
+    e.toggle_mark(mark::BOLD);
+    let (_, loaded) = store::load(&store::save(e.page(), e.blocks())).unwrap();
+    assert_eq!(loaded[0].text, e.blocks()[0].text);
+
+    let md = markdown::serialize(e.blocks());
+    assert_eq!(
+        md,
+        "plain <span style=\"color:red\">red </span><span style=\"color:red;background:yellow\">**both**</span>"
+    );
+    assert_eq!(markdown::parse(&md)[0].text, e.blocks()[0].text);
+    let link = markdown::parse("[a <span style=\"background:blue\">b</span>](x.com)");
+    assert_eq!(markdown::serialize(&link), "[a <span style=\"background:blue\">b</span>](x.com)");
+    let other = "<span style=\"color:teal\">x</span> <span>y</span> <span style=\"color:red\">z";
+    assert_eq!(markdown::parse(other)[0].text.as_str(), other, "other spans are left as they are");
+}
+
+#[test]
+fn store_loads_documents_saved_before_colors() {
+    let (_, blocks) = store::load("notely 2\n\t\t\np00\thi there\t3:1 5:0").expect("loads");
+    assert!(blocks[0].text.has_mark(0..3, mark::BOLD));
+    assert!(blocks[0].text.runs().all(|(_, a)| a.color == 0 && a.bg == 0));
+    let (_, blocks) = store::load("notely 2\n\t\t\np00\thi\t2:0.99.6").expect("loads");
+    let attrs = blocks[0].text.attrs_at(1);
+    assert_eq!((attrs.color, attrs.bg), (0, 6), "a colour this version does not know is left out");
+}
+
+#[test]
 fn store_loads_documents_saved_before_pages() {
     let (page, blocks) = store::load("notely 1\n100\thello\t").expect("loads");
     assert_eq!(page, Page::default());
@@ -534,6 +600,9 @@ fn every_command_is_one_undo_step() {
     undoable(&mut e, "bold", |e| e.toggle_mark(mark::BOLD));
     undoable(&mut e, "a link", |e| e.set_link(Some("https://e.x")));
     undoable(&mut e, "removing a link", |e| e.set_link(None));
+    undoable(&mut e, "a text colour", |e| e.set_color(3));
+    undoable(&mut e, "a background", |e| e.set_background(4));
+    undoable(&mut e, "removing a text colour", |e| e.set_color(0));
     undoable(&mut e, "a block type", |e| e.set_kind(Kind::Quote));
     undoable(&mut e, "a divider", |e| e.set_kind(Kind::Divider));
     e.undo();

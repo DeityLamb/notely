@@ -2,6 +2,10 @@
 //!
 //! One line is one block. A trailing backslash continues the block on the
 //! next line (a soft break inside the block).
+//!
+//! Markdown has no colours: coloured text is written as HTML,
+//! `<span style="color:red;background:blue">`, the colours by name, and
+//! read back from that same form.
 
 mod inline;
 mod parse;
