@@ -63,6 +63,8 @@ const MATH_PAD: f32 = 10.0;
 const MATH_MAX_HEIGHT: f32 = 800.0;
 /// Height of the line below invalid TeX that says what is wrong with it.
 const MATH_ERROR: f32 = 26.0;
+/// Widest the math editor is.
+const MATH_EDITOR_WIDTH: f32 = 560.0;
 /// Where lines through and under text are drawn, in font sizes below the
 /// middle of the line: through the middle of the small letters, and a
 /// little under the baseline.
@@ -127,6 +129,8 @@ const COPIED_TOOL: Tool = action("Copied", tick_icon);
 const EDIT_TOOL: Tool = action("Edit link", pencil_icon);
 const UNLINK_TOOL: Tool = action("Remove link", unlink_icon);
 const APPLY_TOOL: Tool = tool("Apply", Modifiers::NONE, Key::Enter, tick_icon);
+/// The math editor's button.
+const DONE_TOOL: Tool = tool("Done", Modifiers::NONE, Key::Enter, tick_icon);
 /// Side of a toolbar button.
 const TOOL: f32 = 28.0;
 
@@ -236,6 +240,23 @@ enum LinkUi {
     Edit { span: Selection, input: String, had_link: bool, fresh: bool },
 }
 
+/// The editor of a math block's TeX: a popup under the block, which holds
+/// the keyboard while it is open. The block stays as it is, its formula
+/// following the TeX as it is typed.
+struct MathEdit {
+    /// Id of the block.
+    block: u32,
+    input: String,
+    /// The TeX the block shows: the input, or while that cannot be read,
+    /// the last that could, so the formula does not come and go as it is
+    /// typed.
+    shown: String,
+    /// It opened on this frame.
+    fresh: bool,
+    /// It closed, and is fading out.
+    closed: bool,
+}
+
 #[derive(Default)]
 pub struct DocView {
     cache: HashMap<u32, Cached>,
@@ -246,8 +267,8 @@ pub struct DocView {
     /// Height of all rows.
     total: f32,
     /// What `rows` was computed for: document version, width, theme, and
-    /// the math block whose TeX is shown.
-    laid: Option<(u32, u32, bool, Option<usize>)>,
+    /// the math block being edited.
+    laid: Option<(u32, u32, bool, Option<u32>)>,
     /// Column Up/Down try to stay in, kept across consecutive presses.
     h_pos: Option<f32>,
     /// At a soft line wrap the same offset is both the end of one row and
@@ -319,6 +340,10 @@ pub struct DocView {
     /// The open icon or cover picker, and whether it opened on this frame.
     picker: Option<(Picker, bool)>,
     emoji_picker: EmojiPicker,
+    math: Option<MathEdit>,
+    /// The selection and the type of its block when last seen: the editor
+    /// opens when they change to a caret in a math block.
+    math_seen: Option<(Selection, Kind)>,
 }
 
 /// Left and right space between the text column's edges and a block's text.
@@ -421,9 +446,10 @@ impl DocView {
         }
 
         // The document takes all typing, so it holds the keyboard focus
-        // whenever the title, the link editor, the language list and the
-        // emoji picker do not.
-        if !matches!(self.link, LinkUi::Edit { .. }) && self.lang_menu.is_none() && !self.editing_title && !self.picking_icon() {
+        // whenever the title, the link editor, the language list, the
+        // emoji picker and the math editor do not.
+        let elsewhere = self.editing_title || self.picking_icon() || self.editing_math();
+        if !matches!(self.link, LinkUi::Edit { .. }) && self.lang_menu.is_none() && !elsewhere {
             ui.memory_mut(|m| {
                 m.request_focus(id);
                 let all = EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true };
@@ -444,6 +470,7 @@ impl DocView {
         self.code_options(ui, ed, id, origin);
         self.head(ui, ed, pal, id, rect, origin);
         self.pointer(ui, ed, &response, origin);
+        self.follow_math(ed);
         if !ui.input(|i| i.pointer.primary_down()) {
             self.marquee = None;
         }
@@ -485,7 +512,7 @@ impl DocView {
     /// Positions every block. Does nothing when neither the document, the
     /// width nor the theme changed since the last call.
     fn layout(&mut self, ui: &Ui, ed: &Editor, pal: &Palette) {
-        let editing = self.editing_math(ed);
+        let editing = self.math.as_ref().filter(|m| !m.closed).map(|m| m.block);
         let state = Some((ed.version(), self.width.to_bits(), pal.dark, editing));
         if self.laid == state {
             return;
@@ -518,25 +545,16 @@ impl DocView {
             let (mut formula, mut typeset) = (None, false);
             if b.kind == Kind::Math {
                 let indent = f32::from(b.indent) * STEP;
-                let fitted = self.fit_formula(ui, b, self.width - indent);
-                let centred = |top: f32, extent: Vec2| {
-                    Rect::from_min_size(pos2(indent + (self.width - indent - extent.x) / 2.0, top), extent)
-                };
-                match fitted {
-                    // Without the caret, a formula is shown on its own.
-                    Some(Ok((extent, size))) if editing != Some(i) => {
+                match self.fit_formula(ui, self.shown_tex(b), self.width - indent) {
+                    Some(Ok((extent, size))) => {
                         typeset = true;
-                        formula = Some((centred(y + 4.0 + MATH_PAD, extent), size));
+                        let at = pos2(indent + (self.width - indent - extent.x) / 2.0, y + 4.0 + MATH_PAD);
+                        formula = Some((Rect::from_min_size(at, extent), size));
                         height = 2.0 * (4.0 + MATH_PAD) + extent.y;
                     }
-                    // With it, below its TeX.
-                    Some(Ok((extent, size))) => {
-                        let top = text.y + galley.size().y + CODE_PAD.y + MATH_PAD;
-                        formula = Some((centred(top, extent), size));
-                        height = top + extent.y + MATH_PAD + 4.0 - y;
-                    }
-                    // Below the TeX, a line saying what is wrong with it.
+                    // Its TeX, with a line below saying what is wrong with it.
                     Some(Err(_)) => height += MATH_ERROR - 6.0,
+                    // A box saying it is empty.
                     None => {}
                 }
             }
@@ -551,20 +569,18 @@ impl DocView {
         }
     }
 
-    /// The math block whose TeX is shown, for editing: the one the selection
-    /// is in, unless it reaches out of it.
-    fn editing_math(&self, ed: &Editor) -> Option<usize> {
-        let sel = ed.selection();
-        let i = sel.focus.block;
-        let inside = sel.anchor.block == i && self.picked.is_none() && !self.editing_title;
-        (inside && ed.blocks()[i].kind == Kind::Math).then_some(i)
+    /// The TeX a math block shows: its own, or while it is edited, the last
+    /// that could be read.
+    fn shown_tex<'a>(&'a self, b: &'a Block) -> &'a str {
+        match &self.math {
+            Some(m) if m.block == b.id && !m.closed => &m.shown,
+            _ => b.text.as_str(),
+        }
     }
 
-    /// The extent and font size of a math block's formula, made smaller to
-    /// fit `width`; None while the block is empty, and why its TeX is
-    /// invalid if it is.
-    fn fit_formula(&self, ui: &Ui, b: &Block, width: f32) -> Option<Result<(Vec2, f32), String>> {
-        let tex = b.text.as_str();
+    /// The extent and font size of a formula, made smaller to fit `width`;
+    /// None while it is empty, and why its TeX is invalid if it is.
+    fn fit_formula(&self, ui: &Ui, tex: &str, width: f32) -> Option<Result<(Vec2, f32), String>> {
         if tex.trim().is_empty() {
             return None;
         }
@@ -700,7 +716,11 @@ impl DocView {
                 } else {
                     self.target(ed, key, cmd)
                 };
-                ed.set_selection(Selection { anchor: if shift { sel.anchor } else { to }, focus: to });
+                if shift || to.block == sel.focus.block {
+                    ed.set_selection(Selection { anchor: if shift { sel.anchor } else { to }, focus: to });
+                } else {
+                    self.land(ed, to);
+                }
             }
             (true, false, Key::A) => {
                 // First the text of the block, then every block.
@@ -756,6 +776,17 @@ impl DocView {
         ed.set_selection(Selection::caret(Pos::new(focus, 0)));
     }
 
+    /// Moves the caret to `to` from another block. A math block is picked
+    /// rather than entered: Enter opens its editor, arrows go on past it.
+    fn land(&mut self, ed: &mut Editor, to: Pos) {
+        if ed.blocks()[to.block].kind == Kind::Math {
+            self.pick(ed, to.block, to.block);
+        } else {
+            self.picked = None;
+            ed.set_selection(Selection::caret(to));
+        }
+    }
+
     /// Keyboard and clipboard input while blocks are selected as blocks.
     fn block_event(&mut self, ui: &Ui, ed: &mut Editor, pal: &Palette, event: &Event) {
         let Some((anchor, focus)) = self.picked else { return };
@@ -791,9 +822,22 @@ impl DocView {
                 match (cmd, m.shift, key) {
                     (_, _, Key::Backspace | Key::Delete) => remove(self, ed),
                     (false, _, Key::Escape) => self.picked = None,
+                    (false, false, Key::Enter) if lo == hi && ed.blocks()[hi].kind == Kind::Math => self.open_math(ed, hi),
                     (false, false, Key::Enter) => {
                         self.picked = None;
                         ed.set_selection(Selection::caret(Pos::new(hi, ed.blocks()[hi].text.len())));
+                    }
+                    // Arrows step over a formula picked by arrowing onto it.
+                    (false, false, Key::ArrowUp | Key::ArrowDown | Key::ArrowLeft | Key::ArrowRight)
+                        if lo == hi && ed.blocks()[hi].kind == Kind::Math =>
+                    {
+                        let to = match key {
+                            Key::ArrowUp | Key::ArrowLeft => hi.checked_sub(1).map(|i| Pos::new(i, ed.blocks()[i].text.len())),
+                            _ => (hi < last).then(|| Pos::new(hi + 1, 0)),
+                        };
+                        if let Some(to) = to {
+                            self.land(ed, to);
+                        }
                     }
                     (false, shift, Key::ArrowUp | Key::ArrowDown) => {
                         let to = if key == Key::ArrowUp { focus.saturating_sub(1) } else { (focus + 1).min(last) };
@@ -1738,11 +1782,16 @@ impl DocView {
                     painter.rect_filled(bar, 0.0, pal.fg);
                 }
                 Kind::Math if row.typeset => {
-                    // Under the pointer, a formula shows it can be clicked.
-                    if self.handle == Some(i) && self.drag.is_none() {
+                    // Under the pointer, a formula shows it can be clicked;
+                    // being edited, which one is.
+                    let edited = self.math.as_ref().is_some_and(|m| m.block == b.id && !m.closed);
+                    let lit = edited || (self.handle == Some(i) && self.drag.is_none());
+                    let fade = ui.ctx().animate_bool_with_time(ui.id().with(("formula", b.id)), lit, HANDLE_FADE);
+                    if fade > 0.0 {
                         let min = pos2(left, origin.y + row.top + 4.0);
                         let max = pos2(column.right(), origin.y + row.top + row.height - 4.0);
-                        painter.rect_filled(Rect::from_min_max(min, max), CODE_RADIUS, pal.code_bg.gamma_multiply(0.6));
+                        let color = pal.code_bg.gamma_multiply(0.6 * fade);
+                        painter.rect_filled(Rect::from_min_max(min, max), CODE_RADIUS, color);
                     }
                 }
                 Kind::Code | Kind::Math => {
@@ -1765,7 +1814,7 @@ impl DocView {
                 painter.galley(text + vec2(0.0, row.lead), row.galley.clone(), pal.fg);
             }
             if let Some((rect, size)) = row.formula {
-                math::paint(painter, origin + rect.min.to_vec2(), b.text.as_str(), size, pal.fg);
+                math::paint(painter, origin + rect.min.to_vec2(), self.shown_tex(b), size, pal.fg);
             } else if b.kind == Kind::Math && !b.text.is_empty() {
                 if let Err(error) = math::measure(ui.ctx(), b.text.as_str(), MATH_SIZE) {
                     let at = pos2(text.x, text.y + size.y + CODE_PAD.y + MATH_ERROR / 2.0);
@@ -1777,7 +1826,7 @@ impl DocView {
                 text_lines(painter, b, &row.galley, text, pal);
             }
             let caret_here = sel.is_collapsed() && sel.focus.block == i && self.picked.is_none();
-            if b.text.is_empty() && b.kind == Kind::Math && !caret_here {
+            if b.text.is_empty() && b.kind == Kind::Math {
                 let at = pos2(text.x, text.y + line / 2.0);
                 painter.text(at, Align2::LEFT_CENTER, "Add a TeX equation", FontId::proportional(line * 0.62), pal.muted);
             } else if b.text.is_empty() && caret_here && self.preedit.is_empty() {
@@ -1789,7 +1838,6 @@ impl DocView {
                     Kind::Bullet | Kind::Numbered => "List",
                     Kind::Todo => "To-do",
                     Kind::Quote => "Quote",
-                    Kind::Math => "TeX, like e^{i\\pi} = -1",
                     _ => "",
                 };
                 let at = pos2(text.x, text.y + line / 2.0);
@@ -1844,7 +1892,7 @@ impl DocView {
         if focused {
             ui.ctx().request_repaint_after_secs((BLINK - phase % BLINK) as f32);
         }
-        let elsewhere = matches!(self.link, LinkUi::Edit { .. }) || self.editing_title || self.picking_icon();
+        let elsewhere = matches!(self.link, LinkUi::Edit { .. }) || self.editing_title || self.picking_icon() || self.editing_math();
         if focused && phase < BLINK && self.picked.is_none() && !elsewhere {
             let height = theme::metrics(blocks[sel.focus.block].kind).0 * 1.2;
             let bar = Rect::from_center_size(pos2(caret.left(), caret.center().y), vec2(1.0, height));
@@ -1862,7 +1910,7 @@ impl DocView {
         // Tell the platform where the caret is, so an input method can
         // place its candidate window next to it. The title tells it its own.
         ui.output_mut(|o| {
-            if self.editing_title || self.picking_icon() {
+            if self.editing_title || self.picking_icon() || self.editing_math() {
                 return;
             }
             o.ime = Some(egui::output::IMEOutput {
@@ -1944,6 +1992,7 @@ impl DocView {
     fn popups(&mut self, ui: &Ui, ed: &mut Editor, pal: &Palette, origin: Pos2) {
         self.language_menu(ui, ed, pal, origin);
         self.picker(ui, ed, pal, origin);
+        self.math_popup(ui, ed, pal, origin);
         if self.editing_title {
             return;
         }
@@ -2024,6 +2073,128 @@ impl DocView {
         }
         if link {
             self.edit_link(ed);
+        }
+    }
+
+    /// Whether the math editor is open; it has the keyboard.
+    fn editing_math(&self) -> bool {
+        self.math.as_ref().is_some_and(|m| !m.closed)
+    }
+
+    /// Opens the editor of math block `i`, with the document's caret
+    /// parked after its TeX.
+    fn open_math(&mut self, ed: &mut Editor, i: usize) {
+        let b = &ed.blocks()[i];
+        let input = b.text.as_str().to_owned();
+        self.math = Some(MathEdit { block: b.id, shown: input.clone(), input, fresh: true, closed: false });
+        (self.picked, self.menu, self.link) = (None, None, LinkUi::Closed);
+        ed.set_selection(Selection::caret(Pos::new(i, b.text.len())));
+        self.math_seen = Some((ed.selection(), Kind::Math));
+    }
+
+    /// Opens the math editor when the caret comes to rest in a math block,
+    /// by a click, a shortcut or the slash menu, and closes it when its
+    /// block goes away.
+    fn follow_math(&mut self, ed: &mut Editor) {
+        let sel = ed.selection();
+        let b = &ed.blocks()[sel.focus.block];
+        let seen = Some((sel, b.kind));
+        let moved = std::mem::replace(&mut self.math_seen, seen) != seen;
+        let inside = sel.anchor.block == sel.focus.block && self.picked.is_none() && !self.editing_title;
+        let open = self.math.as_ref().filter(|m| !m.closed).map(|m| m.block);
+        if moved && inside && b.kind == Kind::Math && open != Some(b.id) {
+            self.open_math(ed, sel.focus.block);
+        }
+        if let Some(m) = self.math.as_mut().filter(|m| !m.closed) {
+            m.closed = !ed.blocks().iter().any(|b| b.id == m.block && b.kind == Kind::Math);
+        }
+    }
+
+    /// The math editor: the TeX in a field under its block, Done, and what
+    /// is wrong with the TeX when it cannot be read. It fades in and out.
+    fn math_popup(&mut self, ui: &Ui, ed: &mut Editor, pal: &Palette, origin: Pos2) {
+        let ctx = ui.ctx();
+        let open = self.editing_math();
+        let opacity = ctx.animate_bool_with_time(Id::new("math-editor"), open, HANDLE_FADE);
+        let Some(m) = self.math.as_mut() else { return };
+        let i = ed.blocks().iter().position(|b| b.id == m.block).filter(|&i| i < self.rows.len());
+        let Some(i) = i.filter(|_| open || opacity > 0.0) else {
+            self.math = None;
+            return;
+        };
+        let (b, row) = (&ed.blocks()[i], &self.rows[i]);
+        let indent = f32::from(b.indent) * STEP;
+        let at = origin + vec2(indent, row.top + row.height + 2.0);
+        let block = Rect::from_min_size(origin + vec2(indent, row.top), vec2(self.width - indent, row.height));
+        let width = (self.width - indent).min(MATH_EDITOR_WIDTH);
+        let error = match m.input.trim().is_empty() {
+            true => None,
+            false => math::measure(ctx, &m.input, MATH_SIZE).err(),
+        };
+        let opened = std::mem::take(&mut m.fresh);
+        let mut done = false;
+        let area = Area::new(Id::new("math-editor")).order(Order::Foreground).fixed_pos(at).interactable(open);
+        let shown = area.show(ctx, |ui| {
+            ui.set_opacity(opacity);
+            egui::Frame::popup(ui.style()).inner_margin(4.0).show(ui, |ui| {
+                ui.set_width(width);
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    let field = egui::TextEdit::multiline(&mut m.input)
+                        .font(FontId::monospace(13.5))
+                        .hint_text(r"TeX, like e^{i\pi} = -1")
+                        .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(8, 6)))
+                        .desired_rows(1)
+                        .desired_width(width - TOOL - 2.0)
+                        .return_key(Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter)));
+                    ui.visuals_mut().text_cursor.stroke.color = Color32::TRANSPARENT;
+                    let field = field.show(ui);
+                    field_caret(ui, &field, pal.fg);
+                    let field = field.response.response;
+                    // It keeps the keyboard while open, even from the click
+                    // that opened it.
+                    if open && !field.has_focus() {
+                        field.request_focus();
+                    }
+                    if field.changed() {
+                        replace_tex(ed, i, &m.input);
+                        if m.input.trim().is_empty() || math::measure(ui.ctx(), &m.input, MATH_SIZE).is_ok() {
+                            m.shown.clone_from(&m.input);
+                        }
+                    }
+                    // Enter is done, unless it is the one that opened it;
+                    // Shift+Enter breaks the line.
+                    let enter = !opened && ui.input(|i| i.key_pressed(Key::Enter) && !i.modifiers.shift);
+                    done = tool_button(ui, pal, &DONE_TOOL, false) || enter;
+                });
+                if let Some(error) = &error {
+                    let text = egui::RichText::new(error).size(12.5).color(pal.code_fg);
+                    ui.horizontal(|ui| {
+                        ui.add_space(8.0);
+                        ui.add(egui::Label::new(text).wrap());
+                    });
+                    ui.add_space(4.0);
+                }
+            });
+        });
+        if !open {
+            return;
+        }
+        let escape = ctx.input(|i| i.key_pressed(Key::Escape));
+        let on_block = ctx.input(|i| i.pointer.interact_pos()).is_some_and(|p| block.contains(p));
+        let away = !opened && shown.response.clicked_elsewhere() && !on_block;
+        if done || escape || away {
+            m.closed = true;
+        }
+        if done {
+            // On to the text after the formula.
+            match ed.blocks().get(i + 1).filter(|next| next.kind.is_rich()) {
+                Some(_) => ed.set_selection(Selection::caret(Pos::new(i + 1, 0))),
+                None => ed.add_below(i),
+            }
+            self.reveal = true;
+        } else if escape {
+            self.pick(ed, i, i);
         }
     }
 
@@ -2128,6 +2299,23 @@ impl DocView {
             self.link = LinkUi::Closed;
         }
     }
+}
+
+/// Puts `input` in place of math block `i`'s TeX, replacing only what
+/// differs, so that it is undone as the typing it was.
+fn replace_tex(ed: &mut Editor, i: usize, input: &str) {
+    let old = ed.blocks()[i].text.as_str();
+    let mut start = old.bytes().zip(input.bytes()).take_while(|(a, b)| a == b).count();
+    while !old.is_char_boundary(start) {
+        start -= 1;
+    }
+    let (rest, new) = (&old[start..], &input[start..]);
+    let mut end = rest.bytes().rev().zip(new.bytes().rev()).take_while(|(a, b)| a == b).count();
+    while !rest.is_char_boundary(rest.len() - end) {
+        end -= 1;
+    }
+    let range = start..old.len() - end;
+    ed.replace_text(i, range, &new[..new.len() - end]);
 }
 
 /// Calls `draw` with each piece of line that a run of the block's text
