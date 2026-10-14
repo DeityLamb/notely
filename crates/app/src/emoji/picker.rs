@@ -3,7 +3,7 @@
 //! below for each category.
 
 use eframe::egui::{
-    self, pos2, vec2, Align, Align2, CursorIcon, FontId, Frame, Id, Key, Margin, Rect, Response, ScrollArea, Sense, Stroke,
+    self, pos2, vec2, Align, Align2, CursorIcon, FontId, Frame, Layout, UiBuilder, Id, Key, Margin, Rect, Response, ScrollArea, Sense, Stroke,
     TextEdit, Ui, Vec2,
 };
 
@@ -130,9 +130,18 @@ impl EmojiPicker {
                         .fill(pal.code_bg)
                         .stroke(Stroke::new(1.0, pal.line))
                         .corner_radius(6.0)
-                        .inner_margin(Margin { left: 30, right: 8, top: 7, bottom: 7 }),
-                );
-            let response = ui.put(field, edit);
+                        .inner_margin(Margin { left: 30, right: 8, top: 0, bottom: 0 }),
+                )
+                .margin(Margin { left: 30, right: 8, top: 0, bottom: 0 })
+                .desired_width(field.width())
+                .min_size(field.size())
+                .vertical_align(Align::Center);
+            // In a layout of its own, exactly the size of its place: however
+            // tall the font makes it, it never moves what is below, nor
+            // what the tones show in its place.
+            let mut place = ui.new_child(UiBuilder::new().max_rect(field).layout(Layout::left_to_right(Align::Center)));
+            place.set_clip_rect(field.expand(1.0).intersect(ui.clip_rect()));
+            let response = place.add(edit);
             if fresh {
                 response.request_focus();
             }
