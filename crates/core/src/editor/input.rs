@@ -70,13 +70,19 @@ impl Editor {
             let b = &self.blocks[i];
             (b.kind, b.indent, b.text.len())
         };
-        let fence = kind == Kind::Paragraph
-            && pos.offset == len
-            && self.blocks[i].text.as_str().starts_with("```");
-        if kind == Kind::Divider {
+        let text = self.blocks[i].text.as_str();
+        let at_end = kind == Kind::Paragraph && pos.offset == len;
+        let fence = at_end && text.starts_with("```");
+        if kind == Kind::Divider || kind == Kind::Math {
+            // A formula is one block however long: Enter goes on below it.
             let nb = self.new_block(Kind::Paragraph);
             self.splice(i + 1..i + 1, vec![nb]);
             self.sel = Selection::caret(Pos::new(i + 1, 0));
+        } else if at_end && text == "$$" {
+            let b = self.touch(i);
+            b.kind = Kind::Math;
+            b.text = RichText::new();
+            self.sel = Selection::caret(Pos::new(i, 0));
         } else if kind == Kind::Code {
             self.touch(i).text.insert(pos.offset, "\n", &Attrs::default());
             self.sel = Selection::caret(Pos::new(i, pos.offset + 1));

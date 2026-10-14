@@ -20,7 +20,7 @@ const HEADER: &str = "notely 2";
 /// Documents saved before pages had a title, icon and cover: no page line.
 const HEADER_V1: &str = "notely 1";
 
-const KINDS: [(char, Kind); 10] = [
+const KINDS: [(char, Kind); 11] = [
     ('p', Kind::Paragraph),
     ('1', Kind::H1),
     ('2', Kind::H2),
@@ -30,6 +30,7 @@ const KINDS: [(char, Kind); 10] = [
     ('t', Kind::Todo),
     ('q', Kind::Quote),
     ('c', Kind::Code),
+    ('m', Kind::Math),
     ('d', Kind::Divider),
 ];
 

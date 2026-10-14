@@ -116,10 +116,11 @@ impl Editor {
         a
     }
 
-    /// Appends text to a block; code blocks take it without formatting.
+    /// Appends text to a block; code and math blocks take it without
+    /// formatting.
     pub(super) fn join(&mut self, i: usize, text: RichText) {
         let b = self.touch(i);
-        if b.kind == Kind::Code {
+        if !b.kind.is_rich() {
             b.text.push(text.as_str(), &Attrs::default());
         } else {
             b.text.append(text);

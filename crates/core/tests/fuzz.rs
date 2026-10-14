@@ -17,7 +17,7 @@ impl Rng {
     }
 }
 
-const KINDS: [Kind; 10] = [
+const KINDS: [Kind; 11] = [
     Kind::Paragraph,
     Kind::H1,
     Kind::H2,
@@ -27,15 +27,16 @@ const KINDS: [Kind; 10] = [
     Kind::Todo,
     Kind::Quote,
     Kind::Code,
+    Kind::Math,
     Kind::Divider,
 ];
 
-const TEXT: [&str; 24] = [
+const TEXT: [&str; 25] = [
     "a", "b", " ", " ", "é", "мир", "日本", "👍", "#", "-", "1.", "[]", ">", "*", "**", "`", "~~", "_",
-    "[x](y)", "---", "```", "\\", "/", "word ",
+    "[x](y)", "---", "```", "\\", "/", "word ", "$$",
 ];
 
-const PASTE: [&str; 8] = [
+const PASTE: [&str; 9] = [
     "plain",
     "# Title\n\ntext **bold** and `code`",
     "- one\n  - two\n- [x] done",
@@ -43,6 +44,7 @@ const PASTE: [&str; 8] = [
     "a\\\nb",
     "> quote *it* [l](https://e.x)\n\n---\n",
     "мир **жир** 日本",
+    "$$\n\\frac{a}{b}\n$$\n\n$$x$$",
     "",
 ];
 

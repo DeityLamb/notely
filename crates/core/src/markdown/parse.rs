@@ -16,6 +16,10 @@ pub fn parse(src: &str) -> Vec<Block> {
             out.push(code_block(tag, &mut lines));
             continue;
         }
+        if let Some(rest) = body.strip_prefix("$$") {
+            out.push(math_block(rest, &mut lines));
+            continue;
+        }
         let (kind, checked, rest) = prefix(body).unwrap_or((Kind::Paragraph, false, body));
         let mut text = rest.trim_end().to_string();
         while ends_with_break(&text) {
@@ -49,6 +53,28 @@ fn code_block(tag: &str, lines: &mut std::str::Lines) -> Block {
     let mut block = Block::new(Kind::Code, RichText::plain(&code));
     block.lang = crate::highlight::language(tag);
     block
+}
+
+/// Reads a formula up to the `$$` that closes it, on the same line or a
+/// later one. `rest` is what followed the opening `$$`.
+fn math_block(rest: &str, lines: &mut std::str::Lines) -> Block {
+    let mut tex = String::new();
+    let mut line = rest;
+    loop {
+        if let Some(end) = line.trim_end().strip_suffix("$$") {
+            tex.push_str(end);
+            break;
+        }
+        tex.push_str(line);
+        match lines.next() {
+            Some(next) => {
+                tex.push('\n');
+                line = next;
+            }
+            None => break,
+        }
+    }
+    Block::new(Kind::Math, RichText::plain(tex.trim()))
 }
 
 /// Splits a block marker off the start of a line.

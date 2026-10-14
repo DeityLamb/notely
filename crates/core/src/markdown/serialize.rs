@@ -43,6 +43,12 @@ pub fn serialize(blocks: &[Block]) -> String {
                 out.push_str("\n```");
                 continue;
             }
+            Kind::Math => {
+                out.push_str("$$\n");
+                out.push_str(b.text.as_str());
+                out.push_str("\n$$");
+                continue;
+            }
             Kind::Divider => {
                 out.push_str("---");
                 continue;
@@ -58,6 +64,8 @@ pub fn serialize(blocks: &[Block]) -> String {
                     _ => 0,
                 };
                 out.insert(start + at, '\\');
+            } else if out[start..].starts_with("$$") {
+                out.insert(start, '\\');
             }
         }
     }
