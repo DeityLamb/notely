@@ -45,6 +45,10 @@ mod imp {
     /// Where the document is kept. A pull request's preview shares the
     /// site's origin, so it keeps a document of its own, by its path,
     /// rather than read and overwrite the site's.
+    ///
+    /// A convenience for developers trying previews, not a promise: no
+    /// isolation, migration or cleanup of preview documents is owed, and
+    /// changes need not preserve them. Drop or rework it freely.
     fn key() -> String {
         let path = web_sys::window().and_then(|w| w.location().pathname().ok()).unwrap_or_default();
         if path.contains("/pr-preview/") {

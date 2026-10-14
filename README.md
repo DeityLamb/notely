@@ -17,8 +17,9 @@ make test       # all tests, run natively (includes random editing sessions)
 
 Pushes to `main` publish `www` to GitHub Pages, from the `gh-pages` branch.
 Each pull request gets a preview at `pr-preview/pr-<number>/` on the same
-site, linked in a comment and removed when it closes; a preview keeps its
-document apart from the site's.
+site, linked in a comment and removed when it closes. A preview saves its
+document under a key of its own, a convenience for development only: preview
+documents are throwaway and need no protecting.
 
 The Rust version and the wasm target are pinned in `rust-toolchain.toml`;
 rustup installs them on first use.
