@@ -20,6 +20,7 @@ use eframe::egui::{
 use notely_core::highlight::LANGUAGES;
 use notely_core::{mark, Attrs, Block, Editor, Kind, Pos, Selection};
 
+use crate::emoji::{self, picker::{Choice, EmojiPicker}};
 use crate::theme::{self, Palette, BODY, STEP};
 
 const MAX_WIDTH: f32 = 700.0;
@@ -48,8 +49,6 @@ const COVER_HEIGHT: f32 = 200.0;
 const ICON_SIZE: f32 = 64.0;
 const ICON_BOX: f32 = 78.0;
 const HEAD_BUTTON_HEIGHT: f32 = 28.0;
-/// Icons offered by the icon picker, and at random by "Add icon".
-const ICONS: &str = "📝📄📚📌💡🚀🎯✅⭐🔥🌱🌊🌸🍀🌙☀⚡🎨🎵🎮📷🎉🏆💬💼🏠✈🌍🧠🔑📅🧪☕🍕🐱🐶👋😀😎❤";
 const CODE_PAD: Vec2 = vec2(18.0, 14.0);
 const QUOTE_PAD: f32 = 16.0;
 const CODE_RADIUS: f32 = 6.0;
@@ -273,6 +272,7 @@ pub struct DocView {
     icon_hot: bool,
     /// The open icon or cover picker, and whether it opened on this frame.
     picker: Option<(Picker, bool)>,
+    emoji_picker: EmojiPicker,
 }
 
 /// Left and right space between the text column's edges and a block's text.
@@ -375,8 +375,9 @@ impl DocView {
         }
 
         // The document takes all typing, so it holds the keyboard focus
-        // whenever the title, the link editor and the language list do not.
-        if !matches!(self.link, LinkUi::Edit { .. }) && self.lang_menu.is_none() && !self.editing_title {
+        // whenever the title, the link editor, the language list and the
+        // emoji picker do not.
+        if !matches!(self.link, LinkUi::Edit { .. }) && self.lang_menu.is_none() && !self.editing_title && !self.picking_icon() {
             ui.memory_mut(|m| {
                 m.request_focus(id);
                 let all = EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true };
@@ -1145,8 +1146,7 @@ impl DocView {
             let random = (ui.input(|i| i.time) * 1000.0) as usize;
             match button {
                 HeadButton::AddIcon => {
-                    let icons = icons(ui);
-                    page.icon = icons.get(random % icons.len().max(1)).map_or("📝".into(), char::to_string);
+                    page.icon = emoji::random(random).to_owned();
                 }
                 HeadButton::AddCover => page.cover = theme::COVERS[random % theme::COVERS.len()].0.to_owned(),
                 HeadButton::ChangeCover => toggle(&mut self.picker, Picker::Cover),
@@ -1229,10 +1229,7 @@ impl DocView {
             cover(painter, band, &page.cover);
         }
         if let Some(icon) = self.head.icon.map(|icon| icon.translate(origin.to_vec2())) {
-            if self.icon_hot || self.picker.is_some_and(|(p, _)| p == Picker::Icon) {
-                painter.rect_filled(icon, 6.0, pal.line);
-            }
-            painter.text(icon.center(), Align2::CENTER_CENTER, &page.icon, theme::emoji_font(ICON_SIZE), pal.fg);
+            emoji::paint(painter, icon.center(), ICON_SIZE, &page.icon, pal.fg);
         }
         let fade = |name, shown| ui.ctx().animate_bool_with_time(id.with(name), shown, HANDLE_FADE);
         let opacity = [fade("head-buttons", self.head_shown.0), fade("cover-buttons", self.head_shown.1)];
@@ -1247,6 +1244,11 @@ impl DocView {
             let color = if hot { pal.fg } else { pal.muted };
             painter.text(r.center(), Align2::CENTER_CENTER, button.label(), FontId::proportional(13.5), color);
         }
+    }
+
+    /// Whether the emoji picker is open; its filter has the keyboard.
+    fn picking_icon(&self) -> bool {
+        self.picker.is_some_and(|(p, _)| p == Picker::Icon)
     }
 
     /// The icon or the cover picker: Remove, and a grid to choose from.
@@ -1264,61 +1266,47 @@ impl DocView {
         let ctx = ui.ctx();
         let mut page = ed.page().clone();
         let mut close = false;
-        let icons = icons(ui);
+        let seed = (ctx.input(|i| i.time) * 1000.0) as usize;
         let shown = Area::new(Id::new(("page-picker", which)))
             .order(Order::Foreground)
             .pivot(pivot)
             .fixed_pos(at)
-            .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
-                    if ui.button("Remove").clicked() {
-                        match which {
-                            Picker::Icon => page.icon.clear(),
-                            Picker::Cover => page.cover.clear(),
+            .show(ctx, |ui| match which {
+                Picker::Icon => {
+                    egui::Frame::popup(ui.style()).inner_margin(0.0).show(ui, |ui| {
+                        match self.emoji_picker.show(ui, &page.icon, pal, fresh, seed) {
+                            Some(Choice::Pick(emoji)) => (page.icon, close) = (emoji, true),
+                            Some(Choice::Random(emoji)) => page.icon = emoji,
+                            Some(Choice::Remove) => (page.icon, close) = (String::new(), true),
+                            None => {}
                         }
-                        close = true;
-                    }
-                    let hover = ui.visuals().widgets.hovered.weak_bg_fill;
-                    match which {
-                        Picker::Icon => {
-                            for row in icons.chunks(8) {
-                                ui.horizontal(|ui| {
-                                    for &c in row {
-                                        let (rect, cell) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::click());
-                                        let cell = cell.on_hover_cursor(CursorIcon::PointingHand);
-                                        if cell.hovered() || page.icon.chars().eq([c]) {
-                                            ui.painter().rect_filled(rect, 5.0, hover);
-                                        }
-                                        ui.painter().text(rect.center(), Align2::CENTER_CENTER, c, theme::emoji_font(22.0), pal.fg);
-                                        if cell.clicked() {
-                                            (page.icon, close) = (c.to_string(), true);
-                                        }
+                    });
+                }
+                Picker::Cover => {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+                        if ui.button("Remove").clicked() {
+                            (page.cover, close) = (String::new(), true);
+                        }
+                        for row in theme::COVERS.chunks(4) {
+                            ui.horizontal(|ui| {
+                                for &(name, ..) in row {
+                                    let (rect, cell) = ui.allocate_exact_size(vec2(76.0, 44.0), Sense::click());
+                                    let cell = cell.on_hover_cursor(CursorIcon::PointingHand);
+                                    cover(ui.painter(), rect, name);
+                                    let current = page.cover == name;
+                                    if current || cell.hovered() {
+                                        let stroke = Stroke::new(2.0, if current { pal.accent } else { pal.muted });
+                                        ui.painter().rect_stroke(rect, 0.0, stroke, StrokeKind::Inside);
                                     }
-                                });
-                            }
-                        }
-                        Picker::Cover => {
-                            for row in theme::COVERS.chunks(4) {
-                                ui.horizontal(|ui| {
-                                    for &(name, ..) in row {
-                                        let (rect, cell) = ui.allocate_exact_size(vec2(76.0, 44.0), Sense::click());
-                                        let cell = cell.on_hover_cursor(CursorIcon::PointingHand);
-                                        cover(ui.painter(), rect, name);
-                                        let current = page.cover == name;
-                                        if current || cell.hovered() {
-                                            let stroke = Stroke::new(2.0, if current { pal.accent } else { pal.muted });
-                                            ui.painter().rect_stroke(rect, 0.0, stroke, StrokeKind::Inside);
-                                        }
-                                        if cell.clicked() {
-                                            page.cover = name.to_owned();
-                                        }
+                                    if cell.clicked() {
+                                        page.cover = name.to_owned();
                                     }
-                                });
-                            }
+                                }
+                            });
                         }
-                    }
-                });
+                    });
+                }
             });
         ed.set_page(page);
         let escape = ctx.input(|i| i.key_pressed(Key::Escape));
@@ -1739,7 +1727,7 @@ impl DocView {
         if focused {
             ui.ctx().request_repaint_after_secs((BLINK - phase % BLINK) as f32);
         }
-        let elsewhere = matches!(self.link, LinkUi::Edit { .. }) || self.editing_title;
+        let elsewhere = matches!(self.link, LinkUi::Edit { .. }) || self.editing_title || self.picking_icon();
         if focused && phase < BLINK && self.picked.is_none() && !elsewhere {
             let height = theme::metrics(blocks[sel.focus.block].kind).0 * 1.2;
             let bar = Rect::from_center_size(pos2(caret.left(), caret.center().y), vec2(1.0, height));
@@ -1757,7 +1745,7 @@ impl DocView {
         // Tell the platform where the caret is, so an input method can
         // place its candidate window next to it. The title tells it its own.
         ui.output_mut(|o| {
-            if self.editing_title {
+            if self.editing_title || self.picking_icon() {
                 return;
             }
             o.ime = Some(egui::output::IMEOutput {
@@ -2070,12 +2058,6 @@ fn text_lines(painter: &Painter, b: &Block, galley: &Galley, text: Pos2, pal: &P
             painter.hline(across, middle + size * STRIKE_DROP, stroke);
         }
     });
-}
-
-/// The icons the emoji font can draw.
-fn icons(ui: &Ui) -> Vec<char> {
-    let font = theme::emoji_font(ICON_SIZE);
-    ui.fonts_mut(|f| ICONS.chars().filter(|&c| f.has_glyph(&font, c)).collect())
 }
 
 /// A cover: one colour, or a gradient from its top left corner to its

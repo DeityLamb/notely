@@ -1,42 +1,66 @@
 name: Publish GitHub Pages
 
+# The site is the gh-pages branch: main at its root, and each open pull
+# request at pr-preview/pr-<number>/, removed when the pull request closes.
+# Pages must be set to deploy from that branch (Settings → Pages → Source:
+# Deploy from a branch, gh-pages, / (root)).
+
 on:
   push:
     branches: [main]
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
   workflow_dispatch:
 
 permissions:
   contents: write
+  pull-requests: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: pages-${{ github.event.pull_request.number || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build-and-publish:
+  deploy:
     runs-on: ubuntu-latest
+    # Pull requests from forks get a read-only token and cannot publish.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        if: github.event.action != 'closed'
         with:
           toolchain: 1.99.0
           targets: wasm32-unknown-unknown
       - uses: actions/cache@v4
+        if: github.event.action != 'closed'
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.cargo/bin/wasm-bindgen
             target
           key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-wasm-
       - name: Install wasm-bindgen
-        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+        if: github.event.action != 'closed'
+        run: command -v wasm-bindgen || cargo install wasm-bindgen-cli --version 0.2.129 --locked
       - name: Build site
+        if: github.event.action != 'closed'
         run: make build
-      - name: Publish gh-pages branch
-        uses: peaceiris/actions-gh-pages@v4
+
+      - name: Deploy main
+        if: github.event_name != 'pull_request'
+        uses: JamesIves/github-pages-deploy-action@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: ./www
-          force_orphan: true
+          folder: www
+          branch: gh-pages
+          clean-exclude: pr-preview/
+
+      - name: Deploy pull request preview
+        if: github.event_name == 'pull_request'
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: www
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview
