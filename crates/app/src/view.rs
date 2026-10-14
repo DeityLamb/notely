@@ -1657,7 +1657,7 @@ impl DocView {
 
             if b.kind.is_rich() {
                 color_backgrounds(painter, b, &row.galley, text, pal);
-                code_backgrounds(painter, b, &row.galley, text, pal.code_bg);
+                code_backgrounds(painter, b, &row.galley, text, pal);
             }
             if b.kind != Kind::Divider {
                 let painter = self.text_painter(painter, b, row, origin);
@@ -2039,17 +2039,19 @@ fn pieces(b: &Block, galley: &Galley, range: Range<usize>, mut draw: impl FnMut(
     }
 }
 
-/// The rounded background of a piece of line, as tall as the letters
-/// rather than the line and a little wider than them.
-fn letter_background(painter: &Painter, b: &Block, piece: Rect, text: Pos2, color: Color32) {
+/// A piece of line cut down to the height of the letters, and widened by
+/// `pad` on each side.
+fn letters(b: &Block, piece: Rect, text: Pos2, pad: f32) -> Rect {
     let half = theme::metrics(b.kind).0 * 0.6;
-    let min = pos2(piece.left() - 2.5, piece.center().y - half);
-    let max = pos2(piece.right() + 2.5, piece.center().y + half);
-    painter.rect_filled(Rect::from_min_max(min, max).translate(text.to_vec2()), INLINE_CODE_RADIUS, color);
+    let min = pos2(piece.left() - pad, piece.center().y - half);
+    let max = pos2(piece.right() + pad, piece.center().y + half);
+    Rect::from_min_max(min, max).translate(text.to_vec2())
 }
 
-/// Backgrounds given to a block's text, one for each stretch of text with
-/// the same background, however its other formatting changes.
+/// Backgrounds given to a block's text: a plain fill behind the letters,
+/// square and no wider than them so that it never reads as inline code;
+/// one for each stretch of text with the same background, however its
+/// other formatting changes.
 fn color_backgrounds(painter: &Painter, b: &Block, galley: &Galley, text: Pos2, pal: &Palette) {
     let runs: Vec<(usize, u8)> = b.text.raw_runs().iter().map(|r| (r.len, r.attrs.bg)).collect();
     let mut at = 0;
@@ -2057,17 +2059,27 @@ fn color_backgrounds(painter: &Painter, b: &Block, galley: &Galley, text: Pos2, 
         let (len, bg) = (stretch.iter().map(|r| r.0).sum::<usize>(), stretch[0].1);
         if bg != 0 {
             let color = pal.back[usize::from(bg)];
-            pieces(b, galley, at..at + len, |piece| letter_background(painter, b, piece, text, color));
+            pieces(b, galley, at..at + len, |piece| {
+                painter.rect_filled(letters(b, piece, text, 0.0), 0.0, color);
+            });
         }
         at += len;
     }
 }
 
-/// Rounded backgrounds behind a block's inline code that has no background
-/// of its own.
-fn code_backgrounds(painter: &Painter, b: &Block, galley: &Galley, text: Pos2, color: Color32) {
-    let wanted = |attrs: &Attrs| attrs.marks & mark::CODE != 0 && attrs.bg == 0;
-    run_pieces(b, galley, wanted, |piece, _| letter_background(painter, b, piece, text, color));
+/// Rounded backgrounds behind a block's inline code. Code given a
+/// background is filled with it and outlined, to stand out as code from
+/// the background around it.
+fn code_backgrounds(painter: &Painter, b: &Block, galley: &Galley, text: Pos2, pal: &Palette) {
+    run_pieces(b, galley, |attrs| attrs.marks & mark::CODE != 0, |piece, attrs| {
+        let chip = letters(b, piece, text, 2.5);
+        if attrs.bg == 0 {
+            painter.rect_filled(chip, INLINE_CODE_RADIUS, pal.code_bg);
+        } else {
+            painter.rect_filled(chip, INLINE_CODE_RADIUS, pal.back[usize::from(attrs.bg)]);
+            painter.rect_stroke(chip, INLINE_CODE_RADIUS, Stroke::new(1.0, pal.line), StrokeKind::Inside);
+        }
+    });
 }
 
 /// Underlines (of links and underlined text) and strike-through (of struck
