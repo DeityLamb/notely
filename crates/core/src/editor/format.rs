@@ -152,7 +152,7 @@ impl Editor {
         let b = self.touch(i);
         b.kind = kind;
         (b.checked, b.lang, b.nowrap) = (false, 0, false);
-        if kind == Kind::Code {
+        if !kind.is_rich() {
             b.text = RichText::plain(b.text.as_str());
         }
     }

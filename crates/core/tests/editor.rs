@@ -362,6 +362,52 @@ fn code_blocks_keep_their_language_and_wrapping() {
 }
 
 #[test]
+fn math_shortcuts_and_enter() {
+    let e = editor("$$ x^2 *not* **bold**\n$$\n\\frac{a}{b}\nafter");
+    assert_eq!(kinds(&e), [Kind::Math, Kind::Math, Kind::Paragraph]);
+    assert_eq!(texts(&e), ["x^2 *not* **bold**", "\\frac{a}{b}", "after"]);
+    // Enter leaves a formula for a paragraph below; Shift+Enter breaks its line.
+    let mut e = editor("$$ a");
+    e.insert_line_break();
+    typed(&mut e, "b");
+    assert_eq!(texts(&e), ["a\nb"]);
+    e.insert_paragraph();
+    assert_eq!(kinds(&e), [Kind::Math, Kind::Paragraph]);
+    assert_eq!(e.selection().focus, Pos::new(1, 0));
+    // Formatting does not reach a formula, and pasting into one is literal.
+    let mut e = Editor::from_blocks(markdown::parse("**bold** text"));
+    e.set_kind(Kind::Math);
+    assert_eq!(markdown::serialize(e.blocks()), "$$\nbold text\n$$");
+    e.set_selection(Selection::caret(Pos::new(0, 0)));
+    e.paste("# \\sum");
+    assert_eq!(texts(&e), ["# \\sumbold text"]);
+    e.toggle_mark(mark::BOLD);
+    select(&mut e, (0, 0), (0, 4));
+    e.toggle_mark(mark::BOLD);
+    assert!(!e.blocks()[0].text.has_mark(0..4, mark::BOLD));
+}
+
+#[test]
+fn math_markdown_and_store() {
+    let src = "$$\ne^{i\\pi} + 1 = 0\n$$\n\n$$ \\frac{1}{2} $$\n\n$$\\begin{matrix}\na & b \\\\\nc & d\n\\end{matrix}$$\n\n\\$$ money";
+    let blocks = markdown::parse(src);
+    let kinds: Vec<Kind> = blocks.iter().map(|b| b.kind).collect();
+    assert_eq!(kinds, [Kind::Math, Kind::Math, Kind::Math, Kind::Paragraph]);
+    let texts: Vec<&str> = blocks.iter().map(|b| b.text.as_str()).collect();
+    assert_eq!(texts, ["e^{i\\pi} + 1 = 0", "\\frac{1}{2}", "\\begin{matrix}\na & b \\\\\nc & d\n\\end{matrix}", "$$ money"]);
+    let out = markdown::serialize(&blocks);
+    assert!(out.starts_with("$$\ne^{i\\pi} + 1 = 0\n$$\n\n$$\n\\frac{1}{2}\n$$\n\n"), "{out}");
+    assert!(out.ends_with("\n\n\\$$ money"), "{out}");
+    let again = markdown::parse(&out);
+    assert!(again.iter().zip(&blocks).all(|(a, b)| a.same_content(b)));
+    // An unclosed formula runs to the end.
+    assert_eq!(markdown::parse("$$\nx")[0].text.as_str(), "x");
+
+    let (_, loaded) = store::load(&store::save(&Page::default(), &blocks)).expect("loads");
+    assert!(loaded.iter().zip(&blocks).all(|(a, b)| a.same_content(b)));
+}
+
+#[test]
 fn slash_command_replaces_query() {
     let mut e = editor("/he");
     e.run_slash(Pos::new(0, 0), Kind::H2);

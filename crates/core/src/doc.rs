@@ -13,6 +13,8 @@ pub enum Kind {
     Todo,
     Quote,
     Code,
+    /// A formula: its text is the LaTeX source, shown typeset.
+    Math,
     Divider,
 }
 
@@ -23,7 +25,7 @@ impl Kind {
 
     /// Blocks whose text can carry inline formatting.
     pub fn is_rich(self) -> bool {
-        !matches!(self, Kind::Code | Kind::Divider)
+        !matches!(self, Kind::Code | Kind::Math | Kind::Divider)
     }
 }
 

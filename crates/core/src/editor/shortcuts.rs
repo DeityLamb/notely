@@ -97,6 +97,7 @@ fn block_marker(before: &str) -> Option<(Kind, bool)> {
         "[] " | "[ ] " => Some((Kind::Todo, false)),
         "[x] " | "[X] " => Some((Kind::Todo, true)),
         "``` " => Some((Kind::Code, false)),
+        "$$ " => Some((Kind::Math, false)),
         _ => match markdown::prefix(before) {
             Some((kind, checked, "")) if kind != Kind::Divider => Some((kind, checked)),
             _ => None,

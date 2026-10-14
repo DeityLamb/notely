@@ -213,13 +213,19 @@ pub fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
+/// Blocks whose text is source, set in the monospace face: code, and the
+/// TeX of a formula.
+pub fn is_source(kind: Kind) -> bool {
+    matches!(kind, Kind::Code | Kind::Math)
+}
+
 /// Font size and line height of a block's text.
 pub fn metrics(kind: Kind) -> (f32, f32) {
     match kind {
         Kind::H1 => (30.0, 38.0),
         Kind::H2 => (24.0, 32.0),
         Kind::H3 => (20.0, 28.0),
-        Kind::Code => (13.5, 21.5),
+        Kind::Code | Kind::Math => (13.5, 21.5),
         _ => (BODY, 25.5),
     }
 }
@@ -230,7 +236,7 @@ pub fn color(b: &Block, attrs: &Attrs, pal: &Palette) -> Color32 {
     let done = b.kind == Kind::Todo && b.checked;
     if attrs.color != 0 && !done {
         pal.text[usize::from(attrs.color)]
-    } else if attrs.marks & mark::CODE != 0 && b.kind != Kind::Code {
+    } else if attrs.marks & mark::CODE != 0 && !is_source(b.kind) {
         pal.code_fg
     } else if done || attrs.link.is_some() {
         pal.muted
@@ -247,7 +253,7 @@ pub fn color(b: &Block, attrs: &Attrs, pal: &Palette) -> Color32 {
 /// caret, the selection, the handles) is level with the text.
 pub fn lead(ui: &egui::Ui, kind: Kind) -> f32 {
     let (size, line_height) = metrics(kind);
-    let family = if kind == Kind::Code { FontFamily::Monospace } else { FontFamily::Proportional };
+    let family = if is_source(kind) { FontFamily::Monospace } else { FontFamily::Proportional };
     let letters = ui.fonts_mut(|f| f.row_height(&FontId::new(size, family)));
     let pixels = ui.pixels_per_point();
     ((line_height - letters) / 2.0 * pixels).round() / pixels
@@ -260,8 +266,8 @@ fn format(b: &Block, attrs: &Attrs, pal: &Palette) -> TextFormat {
     let (size, line_height) = metrics(b.kind);
     let heading = matches!(b.kind, Kind::H1 | Kind::H2 | Kind::H3);
     let has = |m: u8| attrs.marks & m != 0;
-    let inline_code = has(mark::CODE) && b.kind != Kind::Code;
-    let family = if inline_code || b.kind == Kind::Code {
+    let inline_code = has(mark::CODE) && !is_source(b.kind);
+    let family = if inline_code || is_source(b.kind) {
         FontFamily::Monospace
     } else {
         match (heading || has(mark::BOLD), has(mark::ITALIC)) {

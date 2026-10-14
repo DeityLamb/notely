@@ -12,7 +12,7 @@ impl Editor {
             let blk = &self.blocks[a.block];
             let text = blk.text.slice(a.offset..b.offset);
             return match blk.kind {
-                Kind::Code => text.as_str().to_string(),
+                Kind::Code | Kind::Math => text.as_str().to_string(),
                 _ => markdown::inline_to_string(&text),
             };
         }
@@ -27,7 +27,7 @@ impl Editor {
     /// text, as blocks otherwise.
     pub fn paste(&mut self, src: &str) {
         let (a, b) = (self.sel.start(), self.sel.end());
-        if a.block == b.block && self.blocks[a.block].kind == Kind::Code {
+        if a.block == b.block && matches!(self.blocks[a.block].kind, Kind::Code | Kind::Math) {
             return self.insert_text(src);
         }
         let mut blocks = markdown::parse(src);
