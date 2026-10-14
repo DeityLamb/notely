@@ -23,7 +23,7 @@ use notely_core::{mark, Attrs, Block, Editor, Kind, Pos, Selection};
 use crate::colors::ColorPicker;
 use crate::emoji::{self, picker::{Choice, EmojiPicker}};
 use crate::math;
-use crate::theme::{self, Palette, BODY, STEP};
+use crate::theme::{self, Palette, BODY, FADE, STEP};
 
 const MAX_WIDTH: f32 = 700.0;
 /// Space beside the text column; the left one holds the block handles.
@@ -34,15 +34,11 @@ const ADD_WIDTH: f32 = 22.0;
 const GRIP_WIDTH: f32 = 16.0;
 const HANDLE_HEIGHT: f32 = 22.0;
 const HANDLE_GAP: f32 = 6.0;
-/// Seconds the highlight of a selected block takes to fade in and out.
-const PICK_FADE: f32 = 0.12;
 /// Width of the wrap and copy buttons of a code block, the height of all
 /// its options, and their distance from the block's top right corner.
 const OPTION_WIDTH: f32 = 26.0;
 const OPTION_HEIGHT: f32 = 22.0;
 const OPTION_INSET: f32 = 6.0;
-/// Seconds the handles take to fade in and out.
-const HANDLE_FADE: f32 = 0.15;
 /// Space above the page's title, or above its icon, without a cover.
 const TOP: f32 = 56.0;
 /// Height of a page's cover, the size of its icon and of the square the
@@ -1123,7 +1119,7 @@ impl DocView {
     }
 
     fn paint_code_options(&mut self, ui: &Ui, ed: &Editor, pal: &Palette, id: Id, origin: Pos2) {
-        let opacity = ui.ctx().animate_bool_with_time(id.with("code-options"), self.code.is_some(), HANDLE_FADE);
+        let opacity = ui.ctx().animate_bool_with_time(id.with("code-options"), self.code.is_some(), FADE);
         if let Some(i) = self.code {
             self.code_drawn = Some((i, ed.version()));
         }
@@ -1368,7 +1364,7 @@ impl DocView {
         if let Some(icon) = self.head.icon.map(|icon| icon.translate(origin.to_vec2())) {
             emoji::paint(painter, icon.center(), ICON_SIZE, &page.icon, pal.fg);
         }
-        let fade = |name, shown| ui.ctx().animate_bool_with_time(id.with(name), shown, HANDLE_FADE);
+        let fade = |name, shown| ui.ctx().animate_bool_with_time(id.with(name), shown, FADE);
         let opacity = [fade("head-buttons", self.head_shown.0), fade("cover-buttons", self.head_shown.1)];
         for (button, r) in self.head_buttons(ui, ed, origin) {
             let mut painter = painter.clone();
@@ -1585,7 +1581,7 @@ impl DocView {
         }
         // Not while text is being selected with the mouse.
         let shown = self.handle.filter(|&i| i < self.rows.len() && ui.ctx().dragged_id() != Some(id));
-        let opacity = ui.ctx().animate_bool_with_time(id.with("handles"), shown.is_some(), HANDLE_FADE);
+        let opacity = ui.ctx().animate_bool_with_time(id.with("handles"), shown.is_some(), FADE);
         if let Some(i) = shown {
             self.handle_drawn = Some((i, ed.version()));
         }
@@ -1788,7 +1784,7 @@ impl DocView {
                     // being edited, which one is.
                     let edited = self.math.as_ref().is_some_and(|m| m.block == b.id && !m.closed);
                     let lit = edited || (self.handle == Some(i) && self.drag.is_none());
-                    let fade = ui.ctx().animate_bool_with_time(ui.id().with(("formula", b.id)), lit, HANDLE_FADE);
+                    let fade = ui.ctx().animate_bool_with_time(ui.id().with(("formula", b.id)), lit, FADE);
                     if fade > 0.0 {
                         let min = pos2(left, origin.y + row.top + 4.0);
                         let max = pos2(column.right(), origin.y + row.top + row.height - 4.0);
@@ -1856,7 +1852,7 @@ impl DocView {
                 break;
             }
             let b = &blocks[i];
-            let fade = ui.ctx().animate_bool_with_time(ui.id().with(("picked", b.id)), picked.contains(&i), PICK_FADE);
+            let fade = ui.ctx().animate_bool_with_time(ui.id().with(("picked", b.id)), picked.contains(&i), FADE);
             if fade == 0.0 {
                 continue;
             }
@@ -2119,7 +2115,7 @@ impl DocView {
     fn math_popup(&mut self, ui: &Ui, ed: &mut Editor, pal: &Palette, origin: Pos2) {
         let ctx = ui.ctx();
         let open = self.editing_math();
-        let opacity = ctx.animate_bool_with_time(Id::new("math-editor"), open, HANDLE_FADE);
+        let opacity = ctx.animate_bool_with_time(Id::new("math-editor"), open, FADE);
         let Some(m) = self.math.as_mut() else { return };
         let i = ed.blocks().iter().position(|b| b.id == m.block).filter(|&i| i < self.rows.len());
         let Some(i) = i.filter(|_| open || opacity > 0.0) else {

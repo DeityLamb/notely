@@ -18,6 +18,10 @@ const BOLD_ITALIC: &str = "bold-italic";
 /// the symbols differently.
 const EMOJI: &str = "emoji";
 
+/// Seconds anything takes to fade in or out: handles, buttons, highlights,
+/// and egui's own popups and tooltips.
+pub const FADE: f32 = 0.15;
+
 /// Size of a page's title.
 pub const TITLE: f32 = 40.0;
 

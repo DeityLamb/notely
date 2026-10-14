@@ -42,6 +42,7 @@ impl App {
         // Popups and tooltips are flat: an outline, no shadow.
         cc.egui_ctx.all_styles_mut(|style| {
             style.visuals.popup_shadow = egui::Shadow::NONE;
+            style.animation_time = theme::FADE;
             style.visuals.window_shadow = egui::Shadow::NONE;
             // A pointing hand over anything that can be clicked.
             style.visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
